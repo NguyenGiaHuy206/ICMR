@@ -66,6 +66,31 @@ function normalizeFact(fact, entityName, entityId, index) {
   };
 }
 
+export function addEntity(entities, fields) {
+  const name = clean(fields.name);
+  if (!name) throw new Error('Vui lòng nhập tên entity.');
+  if (entities.some(entity => key(entity.name) === key(name))) throw new Error('Tên entity đã tồn tại.');
+  const base = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'entity';
+  let id = base;
+  for (let suffix = 2; entities.some(entity => entity.id === id); suffix++) id = `${base}-${suffix}`;
+  return [...entities, { id, name, localName: clean(fields.localName), country: clean(fields.country), category: clean(fields.category), facts: [] }];
+}
+
+export function addFact(entities, fields) {
+  const entity = entities.find(item => item.id === fields.entityId);
+  if (!entity) throw new Error('Vui lòng chọn entity.');
+  const statement = clean(fields.statement);
+  if (!statement) throw new Error('Vui lòng nhập nội dung fact.');
+  const aspect = clean(fields.aspect);
+  if (!aspect) throw new Error('Vui lòng chọn aspect.');
+  if (entity.facts.some(fact => key(fact.statement) === key(statement))) throw new Error('Fact này đã tồn tại trong entity.');
+  let index = entity.facts.length + 1;
+  let id = `${entity.id}-custom-${index}`;
+  while (entity.facts.some(fact => fact.id === id)) id = `${entity.id}-custom-${++index}`;
+  const fact = normalizeFact({ id, aspect, statement, short_answer: fields.shortAnswer, source: fields.source, status: 'mock' }, entity.name, entity.id, entity.facts.length);
+  return entities.map(item => item.id === entity.id ? { ...item, facts: [...item.facts, fact] } : item);
+}
+
 function random(seed) {
   let state = (Number(seed) || 1) >>> 0;
   return () => ((state = (1664525 * state + 1013904223) >>> 0) / 4294967296);

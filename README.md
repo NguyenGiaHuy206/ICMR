@@ -14,7 +14,7 @@ Mở `http://localhost:4173`. Không cần cài package.
 
 ## Dữ liệu đầu vào
 
-Tab Knowledge base cho phép xem dữ liệu mẫu và nhập JSON dạng:
+Tab Knowledge base cho phép thêm entity, thêm fact cho entity đã chọn, xem dữ liệu mẫu và nhập JSON dạng:
 
 ```json
 {

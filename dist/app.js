@@ -1,5 +1,5 @@
 import { mockEntities, aspectLabels } from './data.js';
-import { generateQuestions, normalizeKnowledgeBase, toCsv } from './logic.js';
+import { addEntity, addFact, generateQuestions, normalizeKnowledgeBase, toCsv } from './logic.js';
 
 const $ = selector => document.querySelector(selector);
 const make = (tag, className = '', content = '') => {
@@ -155,6 +155,11 @@ function download(name, data, mime) {
 }
 
 function renderKb() {
+  const factEntity = $('#fact-entity');
+  const previousEntity = factEntity.value;
+  factEntity.replaceChildren();
+  entities.forEach(entity => { const option = make('option', '', entity.name); option.value = entity.id; factEntity.append(option); });
+  if (entities.some(entity => entity.id === previousEntity)) factEntity.value = previousEntity;
   $('#kb-mode-title').textContent = mode === 'mock' ? 'Dữ liệu mẫu' : 'Dữ liệu đã nhập';
   const facts = entities.flatMap(entity => entity.facts);
   const stats = [['Entity', entities.length], ['Fact / claim', facts.length], ['Sẵn sàng', facts.filter(f => ['mock', 'approved', 'adjudicated', 'accepted', 'verified'].includes(f.status)).length]];
@@ -166,7 +171,7 @@ function renderKb() {
     const details = make('details', 'kb-entity');
     const summary = make('summary'); summary.append(make('strong', '', entity.name), make('span', '', `${entity.facts.length} facts  ＋`)); details.append(summary);
     entity.facts.forEach(fact => {
-      const block = make('div', 'kb-fact'); block.append(make('strong', '', aspectLabels[fact.aspect] || fact.aspect), make('p', '', fact.statement), make('small', '', `${fact.status.toUpperCase()} · ${fact.source || 'Chưa có nguồn'}`)); details.append(block);
+      const block = make('div', 'kb-fact'); block.append(make('strong', '', aspectLabels[fact.aspect] || fact.aspect), make('p', '', fact.statement), make('small', '', `Đáp án: ${fact.answer} · ${fact.answer_origin === 'fallback' ? 'cần biên tập đáp án ngắn' : fact.answer_origin === 'rule' ? 'code trích xuất' : 'đã nhập đáp án ngắn'} · ${fact.source || 'Chưa có nguồn'}`)); details.append(block);
     }); browser.append(details);
   });
   if (!browser.children.length) browser.append(make('p', 'section-help', 'Không tìm thấy dữ liệu phù hợp.'));
@@ -177,6 +182,46 @@ function renderKb() {
 document.querySelectorAll('.nav-item').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
 $('#entity-search').addEventListener('input', renderEntityList);
 $('#kb-search').addEventListener('input', renderKb);
+function saveKb(next) {
+  localStorage.setItem('icmr-qa-kb-v1', JSON.stringify(next));
+  entities = next; mode = 'imported';
+  generated = { mcq: [], open: [] }; skipped = { mcq: [], open: [] };
+  renderEntityList(); renderKb();
+}
+
+$('#entity-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const fields = Object.fromEntries(new FormData(form));
+  try {
+    const next = addEntity(entities, fields);
+    const created = next.at(-1);
+    saveKb(next); selectedIds.add(created.id);
+    renderEntityList(); $('#fact-entity').value = created.id;
+    form.reset(); notify(`Đã thêm ${created.name}. Hãy thêm fact cho entity này.`);
+  } catch (error) { notify(error.message, true); }
+});
+
+$('#fact-aspect').addEventListener('change', event => {
+  const custom = event.target.value === 'other';
+  $('#custom-aspect-label').hidden = !custom;
+  $('#custom-aspect').required = custom;
+});
+
+$('#fact-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const fields = Object.fromEntries(new FormData(form));
+  fields.aspect = fields.aspect === 'other' ? fields.customAspect : fields.aspect;
+  try {
+    const next = addFact(entities, fields);
+    const fact = next.find(entity => entity.id === fields.entityId).facts.at(-1);
+    saveKb(next); selectedIds.add(fields.entityId); renderEntityList();
+    form.reset(); $('#fact-entity').value = fields.entityId;
+    $('#custom-aspect-label').hidden = true; $('#custom-aspect').required = false;
+    notify(fact.raw ? 'Đã thêm fact. Claim này cần đáp án ngắn để tạo trắc nghiệm; bạn vẫn có thể thử câu hỏi mở.' : `Đã thêm fact. Đáp án: ${fact.answer}. Chuyển sang chức năng QA để tạo câu hỏi.`);
+  } catch (error) { notify(error.message, true); }
+});
 $('#select-all').addEventListener('click', () => { selectedIds = new Set(entities.map(entity => entity.id)); renderEntityList(); });
 $('#generate').addEventListener('click', () => {
   if (!selectedIds.size) return notify('Hãy chọn ít nhất một entity.', true);

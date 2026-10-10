@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mockEntities } from '../dist/data.js';
-import { generateQuestions, normalizeKnowledgeBase, toCsv } from '../dist/logic.js';
+import { addEntity, addFact, generateQuestions, normalizeKnowledgeBase, toCsv } from '../dist/logic.js';
 
 const entities = normalizeKnowledgeBase(mockEntities);
 const selectedIds = entities.map(entity => entity.id);
@@ -75,4 +75,27 @@ test('Nested aspect IDs from the review KB use English extraction rules', () => 
 test('Generation is reproducible from the seed', () => {
   const input = { entities, type: 'mcq', selectedIds, perEntity: 3, seed: 12 };
   assert.deepEqual(generateQuestions(input), generateQuestions(input));
+});
+
+test('A user-created entity and fact produce real open and MCQ pairs', () => {
+  const withEntity = addEntity(entities, { name: 'Bánh khảo thử nghiệm', country: 'Việt Nam' });
+  const created = withEntity.at(-1);
+  const kb = addFact(withEntity, { entityId: created.id, aspect: 'shape', statement: 'Bánh khảo thử nghiệm có hình trụ.', source: 'Tài liệu thử' });
+  const fact = kb.at(-1).facts[0];
+  assert.equal(fact.answer_origin, 'rule');
+  assert.notEqual(fact.answer, fact.statement);
+  const open = generateQuestions({ entities: kb, type: 'open', selectedIds: [created.id] });
+  const mcq = generateQuestions({ entities: kb, type: 'mcq', selectedIds: [created.id] });
+  assert.equal(open.questions.length, 1);
+  assert.equal(mcq.questions.length, 1);
+  assert.equal(mcq.questions[0].options[mcq.questions[0].correct_index], fact.answer);
+  assert.equal(normalizeKnowledgeBase(JSON.parse(JSON.stringify(kb))).at(-1).facts[0].answer, fact.answer);
+  assert.equal(entities.some(entity => entity.id === created.id), false);
+});
+
+test('A custom aspect can use an optional short answer', () => {
+  const kb = addFact(entities, { entityId: entities[0].id, aspect: 'color', statement: 'Món ăn có nhiều biến thể màu sắc tùy từng vùng.', shortAnswer: 'Nhiều màu sắc' });
+  assert.equal(kb[0].facts.at(-1).answer, 'Nhiều màu sắc');
+  assert.equal(kb[0].facts.at(-1).answer_origin, 'provided');
+  assert.throws(() => addEntity(entities, { name: entities[0].name }), /tồn tại/);
 });
