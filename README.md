@@ -42,7 +42,7 @@ Có thể nhập JSONL chứa `entity_id`, `entity_name`, `claim_id`, `aspect_id
 
 1. `dist/logic.js` chuẩn hóa entity, claim, aspect, trạng thái và nguồn từ KB.
 2. `dist/derive.js` rút đáp án ngắn từ claim bằng các rule theo aspect (nguồn gốc, hình dáng, ý nghĩa, thành phần, dịp dùng, vùng phổ biến và một số mẫu tiếng Anh). Rule có thể mở rộng khi KB bổ sung loại claim mới.
-3. `dist/logic.js` tạo câu hỏi từ template theo aspect. Với trắc nghiệm, ba phương án nhiễu được lấy từ đáp án của **entity khác trong cùng aspect**, loại trùng và trộn thứ tự bằng seed để tái lập kết quả.
+3. `dist/logic.js` tạo câu hỏi từ template theo aspect, dùng “món ăn/đồ vật/công trình trong ảnh” thay cho tên entity. Câu hỏi mở về dịp sử dụng món ăn có thể hỏi cả tên món và dịp. Khi sử dụng bộ QA cần ghép ảnh theo `entity_id`; file xuất có `requires_image`. Với trắc nghiệm, ba phương án nhiễu được lấy từ đáp án của **entity khác trong cùng aspect**, loại trùng và trộn thứ tự bằng seed để tái lập kết quả.
 4. Nếu không rút được đáp án ngắn, claim vẫn tạo được bản nháp câu hỏi mở với độ tin cậy thấp; trắc nghiệm được bỏ qua và báo lý do. Mỗi QA giữ ID claim, căn cứ, trạng thái KB, nguồn và phương pháp trích xuất để kiểm tra.
 
 Mặc định chỉ fact có trạng thái `approved`, `adjudicated`, `accepted`, `verified` hoặc `mock` được dùng. Có thể bật chế độ thử nghiệm cho claim `pending` và `in_progress`. Có thể sửa, duyệt/loại và xuất JSON/CSV.

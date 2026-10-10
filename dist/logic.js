@@ -105,13 +105,24 @@ function shuffle(items, rng) {
   return output;
 }
 
+function imageSubject(entity) {
+  const category = key(entity.category).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd');
+  if (/am thuc|food|dish|cuisine/.test(category)) return 'Món ăn trong ảnh';
+  if (/kien truc|cong trinh|architecture|heritage|di san/.test(category)) return 'Công trình trong ảnh';
+  if (/dia diem|danh lam|place|location/.test(category)) return 'Địa điểm trong ảnh';
+  if (/trang phuc|clothing|costume/.test(category)) return 'Trang phục trong ảnh';
+  if (/do vat|vat pham|object|artifact/.test(category)) return 'Đồ vật trong ảnh';
+  return 'Đối tượng trong ảnh';
+}
+
 function questionFor(entity, fact) {
-  if (fact.question) return fact.question;
-  if (fact.raw) return /[à-ỹ]/iu.test(fact.statement)
-    ? `Theo knowledge base, ${fact.aspect_label} của ${entity.name} được mô tả như thế nào?`
-    : `What does the knowledge base state about ${fact.aspect_label.toLowerCase()} of ${entity.name}?`;
-  if (questionTemplates[fact.aspect]) return questionTemplates[fact.aspect](entity.name);
-  return `Theo knowledge base, ${fact.aspect_label} của ${entity.name} được mô tả như thế nào?`;
+  const subject = imageSubject(entity);
+  const custom = clean(fact.question);
+  const names = [entity.name, entity.localName].filter(Boolean);
+  if (custom && /trong ảnh|in (?:the )?(?:image|photo|picture)/iu.test(custom) && !names.some(name => key(custom).includes(key(name)))) return custom;
+  if (fact.raw) return `Theo knowledge base, ${fact.aspect_label.toLowerCase()} của ${subject.toLowerCase()} được mô tả như thế nào?`;
+  if (questionTemplates[fact.aspect]) return questionTemplates[fact.aspect](subject);
+  return `${fact.aspect_label} của ${subject.toLowerCase()} là gì?`;
 }
 
 export function generateQuestions({ entities, type, selectedIds, perEntity = 2, seed = 2027, includeUnreviewed = false }) {
@@ -132,12 +143,16 @@ export function generateQuestions({ entities, type, selectedIds, perEntity = 2, 
     for (const fact of facts) {
       const base = {
         id: `${type}-${fact.id}`, type, entity_id: entity.id, entity_name: entity.name,
-        fact_id: fact.id, aspect: fact.aspect, aspect_label: fact.aspect_label, question: questionFor(entity, fact),
+        fact_id: fact.id, aspect: fact.aspect, aspect_label: fact.aspect_label, question: questionFor(entity, fact), requires_image: true,
         answer: fact.answer, evidence: fact.statement, source: fact.source, source_refs: fact.source_refs,
         kb_status: fact.status, review_status: 'draft', raw_answer: fact.raw,
         answer_origin: fact.answer_origin, confidence: fact.confidence
       };
       if (type === 'open') {
+        if (fact.aspect === 'occasion' && imageSubject(entity) === 'Món ăn trong ảnh') {
+          base.question = 'Món ăn trong ảnh là gì và thường xuất hiện trong dịp hoặc hoàn cảnh nào?';
+          base.answer = `${entity.name}; ${fact.answer}`;
+        }
         questions.push(base);
         continue;
       }
@@ -158,9 +173,9 @@ export function generateQuestions({ entities, type, selectedIds, perEntity = 2, 
 }
 
 export function toCsv(questions) {
-  const header = ['type', 'entity_id', 'entity_name', 'fact_id', 'aspect', 'question', 'answer', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_letter', 'evidence', 'source', 'kb_status', 'answer_origin', 'confidence', 'review_status'];
+  const header = ['type', 'entity_id', 'entity_name', 'fact_id', 'aspect', 'question', 'answer', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_letter', 'evidence', 'source', 'kb_status', 'answer_origin', 'confidence', 'review_status', 'requires_image'];
   const quote = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
   const rows = questions.map(q => [q.type, q.entity_id, q.entity_name, q.fact_id, q.aspect, q.question, q.answer,
-    ...(q.options || ['', '', '', '']), q.options ? 'ABCD'[q.correct_index] : '', q.evidence, q.source, q.kb_status, q.answer_origin, q.confidence, q.review_status]);
+    ...(q.options || ['', '', '', '']), q.options ? 'ABCD'[q.correct_index] : '', q.evidence, q.source, q.kb_status, q.answer_origin, q.confidence, q.review_status, q.requires_image]);
   return '\uFEFF' + [header, ...rows].map(row => row.map(quote).join(',')).join('\r\n');
 }

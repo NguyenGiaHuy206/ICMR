@@ -33,8 +33,34 @@ test('Open questions carry answers and do not put the answer text in the questio
   for (const question of questions) {
     assert.ok(question.question.endsWith('?'));
     assert.ok(!question.question.toLocaleLowerCase('vi').includes(question.answer.toLocaleLowerCase('vi')));
+    assert.match(question.question, /trong ảnh/i);
+    assert.ok(!question.question.toLocaleLowerCase('vi').includes(question.entity_name.toLocaleLowerCase('vi')));
+    assert.equal(question.requires_image, true);
     assert.equal(question.options, undefined);
   }
+});
+
+test('Both QA types refer to the image without revealing the entity name', () => {
+  for (const type of ['mcq', 'open']) {
+    const { questions } = generateQuestions({ entities, type, selectedIds, perEntity: 20 });
+    for (const question of questions) {
+      assert.match(question.question, /Món ăn trong ảnh/i);
+      assert.ok(!question.question.toLocaleLowerCase('vi').includes(question.entity_name.toLocaleLowerCase('vi')));
+    }
+  }
+  const imported = normalizeKnowledgeBase({ entities: [{ id: 'statue', name: 'Tượng A', category: 'Đồ vật', facts: [{ aspect: 'origin', statement: 'Tượng A có nguồn gốc từ Huế.', question: 'Tượng A có nguồn gốc từ đâu?', status: 'approved' }] }] });
+  const result = generateQuestions({ entities: imported, type: 'open', selectedIds: ['statue'] });
+  assert.match(result.questions[0].question, /Đồ vật trong ảnh/);
+  assert.doesNotMatch(result.questions[0].question, /Tượng A/);
+});
+
+test('Open occasion question asks for food identity and occasion together', () => {
+  const { questions } = generateQuestions({ entities, type: 'open', selectedIds: ['banh-chung'], perEntity: 20 });
+  const occasion = questions.find(question => question.aspect === 'occasion');
+  assert.match(occasion.question, /là gì và thường xuất hiện/);
+  assert.match(occasion.answer, /Bánh chưng/);
+  assert.match(occasion.answer, /Tết Nguyên đán/);
+  assert.doesNotMatch(occasion.question, /Bánh chưng/);
 });
 
 test('Undervalidated claims are excluded; raw JSONL-style claims can be imported', () => {

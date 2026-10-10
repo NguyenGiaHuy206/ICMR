@@ -38,7 +38,7 @@
         <div class="intro-copy">
           <div class="eyebrow"><span class="eyebrow-line"></span> DATASET CONSTRUCTION / SEA-RAG</div>
           <h1 id="page-title">Sinh câu hỏi <em>trắc nghiệm</em></h1>
-          <p id="page-description">Tạo câu hỏi từ các fact văn hóa. Phương án nhiễu được chọn trong cùng một aspect để câu hỏi có giá trị đánh giá.</p>
+          <p id="page-description">Tạo câu hỏi dựa trên ảnh mà không nêu tên entity. Phương án nhiễu được chọn trong cùng một aspect để câu hỏi có giá trị đánh giá.</p>
         </div>
         <div class="intro-monogram" aria-hidden="true">Q<span>&</span>A</div>
       </section>
@@ -50,7 +50,7 @@
           <section class="panel setup-panel">
             <div class="section-kicker">01 / THIẾT LẬP</div>
             <div class="section-heading"><h2>Chọn dữ liệu đầu vào</h2><span id="selection-count" class="subtle-count"></span></div>
-            <p class="section-help">Chọn những entity cần tạo câu hỏi. Bộ sinh rút đáp án từ claim bằng rule theo aspect, rồi tạo câu hỏi và phương án nhiễu lúc bạn nhấn nút.</p>
+            <p class="section-help">Chọn entity cần tạo câu hỏi. Câu hỏi sẽ dùng cách gọi “món ăn trong ảnh”, “đồ vật trong ảnh”...; khi sử dụng kết quả cần ghép ảnh tương ứng theo entity_id.</p>
             <div class="search-row"><input id="entity-search" type="search" placeholder="Tìm entity..." aria-label="Tìm entity"><button id="select-all" class="text-button" type="button">Chọn tất cả</button></div>
             <div id="entity-list" class="entity-list"></div>
           </section>

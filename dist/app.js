@@ -42,9 +42,9 @@ function setView(next) {
   if (next === 'open') { title.append('Sinh câu hỏi '); title.append(make('em', '', 'mở')); }
   if (next === 'kb') { title.append('Quản lý '); title.append(make('em', '', 'knowledge base')); }
   $('#page-description').textContent = next === 'mcq'
-    ? 'Tạo câu hỏi từ các fact văn hóa. Phương án nhiễu được chọn trong cùng một aspect để câu hỏi có giá trị đánh giá.'
+    ? 'Tạo câu hỏi dựa trên ảnh mà không nêu tên entity. Phương án nhiễu được chọn trong cùng một aspect để câu hỏi có giá trị đánh giá.'
     : next === 'open'
-      ? 'Tạo câu hỏi tự luận ngắn với đáp án chuẩn và căn cứ từ knowledge base, không gợi ý đáp án trong câu hỏi.'
+      ? 'Tạo câu hỏi tự luận ngắn về đối tượng trong ảnh, kèm đáp án chuẩn và căn cứ từ knowledge base.'
       : 'Xem từng entity và fact, nhập dữ liệu thật khi knowledge base sẵn sàng.';
   $('#results-title').textContent = next === 'open' ? 'Bộ câu hỏi mở' : 'Bộ câu hỏi trắc nghiệm';
   renderResults();
@@ -228,7 +228,7 @@ $('#generate').addEventListener('click', () => {
   const result = generateQuestions({ entities, type: view, selectedIds, perEntity: $('#per-entity').value, seed: $('#seed').value, includeUnreviewed: $('#include-drafts').checked });
   generated[view] = result.questions; skipped[view] = result.skipped; renderResults();
   if (!result.questions.length) notify('Không tạo được câu hỏi. Kiểm tra trạng thái fact và số phương án nhiễu.', true);
-  else notify(`Đã tạo ${result.questions.length} câu ${view === 'mcq' ? 'trắc nghiệm' : 'mở'}. Hãy rà soát trước khi xuất.`);
+  else notify(`Đã tạo ${result.questions.length} câu ${view === 'mcq' ? 'trắc nghiệm' : 'mở'}. Hãy ghép ảnh đúng entity và rà soát trước khi xuất.`);
 });
 $('#export-json').addEventListener('click', () => download(`icmr-${view}-qa.json`, JSON.stringify(generated[view], null, 2), 'application/json;charset=utf-8'));
 $('#export-csv').addEventListener('click', () => download(`icmr-${view}-qa.csv`, toCsv(generated[view]), 'text/csv;charset=utf-8'));
