@@ -7,7 +7,7 @@
   <meta name="description" content="Tạo và rà soát câu hỏi trắc nghiệm, câu hỏi mở từ knowledge base văn hóa ICMR.">
   <title>ICMR · QA Studio</title>
   <link rel="stylesheet" href="./styles.css">
-  <link rel="stylesheet" href="./connect.css">
+  <link rel="stylesheet" href="./extras.css">
 </head>
 <body>
   <div class="app-shell">
@@ -86,13 +86,7 @@
           <section class="panel kb-import">
             <div class="section-kicker">DATA SOURCE / IMPORT</div>
             <h2>Knowledge base</h2>
-            <p>Đồng bộ trực tiếp từ ICMR Knowledge Review hoặc nhập JSON/JSONL. Dữ liệu KB được lưu trong trình duyệt này; tài khoản và mật khẩu chỉ dùng khi gửi yêu cầu đồng bộ.</p>
-            <div class="remote-connect">
-              <h3>Kết nối ICMR Knowledge Review</h3>
-              <div class="login-fields"><label>Tên tài khoản<input id="kb-username" autocomplete="username" placeholder="Username"></label><label>Mật khẩu<input id="kb-password" type="password" autocomplete="current-password" placeholder="Password"></label></div>
-              <button id="load-remote" type="button" class="secondary-button">Tải danh sách entity</button>
-              <div id="remote-picker" hidden><div class="remote-picker-head"><strong>Chọn entity để đồng bộ</strong><small>Tối đa 30 entity mỗi lần</small></div><input id="remote-search" type="search" placeholder="Tìm trong KB thật..." aria-label="Tìm entity trên KB thật"><div id="remote-list" class="remote-list"></div><div class="remote-picker-footer"><span id="remote-count">0 được chọn</span><button id="sync-remote" type="button" class="primary-button">Đồng bộ entity đã chọn <span>↗</span></button></div></div>
-            </div>
+            <p>Công cụ sử dụng dữ liệu mẫu để thử nghiệm. Bạn có thể nhập JSON hoặc JSONL chứa entity và claim; dữ liệu chỉ được lưu trong trình duyệt này.</p>
             <div class="import-actions"><label for="kb-file" class="primary-button file-button">Nhập file JSON / JSONL <span>↗</span></label><input id="kb-file" type="file" accept=".json,.jsonl,application/json,application/x-ndjson" hidden><button id="restore-mock" type="button" class="secondary-button">Khôi phục dữ liệu mẫu</button></div>
             <div class="schema-note"><strong>Cấu trúc khuyến nghị</strong><code>{ "entities": [{ "id": "...", "name": "...", "facts": [{ "aspect": "shape", "answer": "...", "statement": "...", "status": "approved", "source": "..." }] }] }</code><small>Hỗ trợ thêm JSONL claim export với entity_id, claim_text, aspect_id. Claim dạng văn bản sẽ dùng toàn câu làm đáp án; nên bổ sung short_answer để tạo trắc nghiệm tốt hơn.</small></div>
           </section>

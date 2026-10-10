@@ -1,27 +1,44 @@
 # ICMR QA Studio
 
-Web tool tạo cặp QA từ knowledge base gồm nhiều entity và fact. Hai chức năng riêng: trắc nghiệm 4 lựa chọn và câu hỏi mở. Dữ liệu mẫu trong `dist/data.js` lấy cảm hứng từ `ICMR 2027.docx` và `OK.docx`; nội dung này **chưa được xác thực**.
+Web tool tạo hai loại cặp QA từ knowledge base: trắc nghiệm 4 lựa chọn và câu hỏi mở. Bản demo dùng dữ liệu mẫu trong `dist/data.js`, dựa trên cấu trúc entity → aspect → claim của ICMR Knowledge Review và các ví dụ trong `ICMR 2027.docx`, `OK.docx`. Nội dung mẫu chưa được xác thực học thuật.
 
 ## Chạy cục bộ
 
 ```powershell
 cd D:\ICMR\qa-generator
 npm test
-npm run build
+npm run serve
 ```
 
-`dist/server/index.js` là Worker được đóng gói để chạy trên Sites. Không cần cài package.
+Mở `http://localhost:4173`. Không cần cài package.
 
-## Đồng bộ KB thật
+## Dữ liệu đầu vào
 
-Trong tab Knowledge base, nhập tài khoản của ICMR Knowledge Review, tải danh sách entity, chọn tối đa 30 entity và đồng bộ. Backend đăng nhập vào API của trang review trong mỗi yêu cầu rồi chỉ trả về entity, claim, aspect, trạng thái và nguồn cần cho QA. Tài khoản, mật khẩu, session cookie và dữ liệu review cá nhân không được lưu vào mã nguồn hay `localStorage`; mật khẩu trong ô nhập được xóa khi đồng bộ thành công. KB được lưu trong `localStorage` của trình duyệt hiện tại.
+Tab Knowledge base cho phép xem dữ liệu mẫu và nhập JSON dạng:
 
-Tài khoản MEMBER không có quyền dùng API export của ADMIN. Đồng bộ dùng API danh sách và chi tiết entity, vì vậy không cần quyền admin.
+```json
+{
+  "entities": [
+    {
+      "id": "banh-chung",
+      "name": "Bánh chưng",
+      "facts": [
+        {
+          "id": "claim-1",
+          "aspect": "meaning",
+          "answer": "Tượng trưng cho Đất",
+          "statement": "Hình vuông của bánh chưng tượng trưng cho Đất.",
+          "status": "approved",
+          "source": "Nguồn và vị trí trích dẫn"
+        }
+      ]
+    }
+  ]
+}
+```
 
-## Nhập knowledge base
+Có thể nhập JSONL chứa `entity_id`, `entity_name`, `claim_id`, `aspect_id`, `claim_text`, `status` như dạng claim trong KB review. Trường `sources` được giữ dưới dạng nguồn tham chiếu. Nếu claim chỉ có câu văn đầy đủ, công cụ dùng cả câu làm đáp án và gắn nhãn cần rút gọn để người biên tập kiểm tra.
 
-Tại tab Knowledge base, nhập JSON dạng `{"entities":[{"id":"...","name":"...","facts":[{"id":"...","aspect":"shape","answer":"...","statement":"...","source":"...","status":"approved"}]}]}`. Có thể nhập file JSONL gồm các claim với `entity_id`, `entity_name`, `claim_id`, `aspect_id`, `claim_text`, `status`. Claim dạng văn bản được dùng làm đáp án đầy đủ; thêm `answer` hoặc `short_answer` để đáp án trắc nghiệm ngắn và rõ.
+Mặc định chỉ fact có trạng thái `approved`, `adjudicated`, `accepted`, `verified` hoặc `mock` được dùng. Có thể bật chế độ thử nghiệm cho claim `pending` và `in_progress`. Trắc nghiệm cần ba phương án nhiễu khác nhau trong cùng aspect. Mỗi QA giữ ID entity, ID fact, trạng thái, căn cứ và nguồn; có thể sửa, duyệt/loại và xuất JSON/CSV.
 
-Fact có trạng thái `approved`, `adjudicated`, `accepted`, `verified` hoặc `mock` mới được sinh câu hỏi mặc định. Có thể bật chế độ thử nghiệm để dùng claim `pending` hoặc `in_progress`; kết quả được gắn nhãn chưa duyệt. Trắc nghiệm chỉ được tạo khi có ba đáp án nhiễu khác nhau trong cùng aspect. Mỗi kết quả lưu `entity_id`, `fact_id`, aspect, câu hỏi, đáp án, căn cứ và nguồn. Người dùng có thể sửa câu hỏi/đáp án, duyệt/loại và xuất JSON/CSV.
-
-Claim gốc thường là câu văn tiếng Anh thay vì đáp án ngắn có cấu trúc. Với claim dạng này, công cụ tạo bản nháp QA có nhãn “Cần rút gọn đáp án” để người biên tập rà soát; phương án trắc nghiệm được lấy từ claim cùng aspect của entity khác. Dữ liệu không được đồng bộ giữa các thiết bị.
+Dữ liệu nhập được lưu trong `localStorage` của trình duyệt hiện tại. Web tool không đăng nhập, gọi API hay đồng bộ với ICMR Knowledge Review.

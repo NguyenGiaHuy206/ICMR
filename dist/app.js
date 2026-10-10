@@ -19,8 +19,6 @@ let selectedIds = new Set(entities.map(entity => entity.id));
 let view = 'mcq';
 let generated = { mcq: [], open: [] };
 let skipped = { mcq: [], open: [] };
-let remoteEntities = [];
-let remoteSelected = new Set();
 
 function notify(message, error = false) {
   const box = $('#notice');
@@ -189,68 +187,6 @@ $('#generate').addEventListener('click', () => {
 $('#export-json').addEventListener('click', () => download(`icmr-${view}-qa.json`, JSON.stringify(generated[view], null, 2), 'application/json;charset=utf-8'));
 $('#export-csv').addEventListener('click', () => download(`icmr-${view}-qa.csv`, toCsv(generated[view]), 'text/csv;charset=utf-8'));
 $('#restore-mock').addEventListener('click', () => { entities = mock; mode = 'mock'; selectedIds = new Set(entities.map(e => e.id)); generated = { mcq: [], open: [] }; skipped = { mcq: [], open: [] }; localStorage.removeItem('icmr-qa-kb-v1'); renderEntityList(); renderKb(); notify('Đã khôi phục knowledge base mẫu.'); });
-
-async function remoteRequest(path, body) {
-  const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `Yêu cầu thất bại (${response.status}).`);
-  return data;
-}
-
-function credentials() {
-  const username = $('#kb-username').value.trim();
-  const password = $('#kb-password').value;
-  if (!username || !password) throw new Error('Nhập tên tài khoản và mật khẩu KB.');
-  return { username, password };
-}
-
-function renderRemoteList() {
-  const search = $('#remote-search').value.trim().toLocaleLowerCase('vi');
-  const list = $('#remote-list'); list.replaceChildren();
-  remoteEntities.filter(entity => entity.name.toLocaleLowerCase('vi').includes(search)).forEach(entity => {
-    const row = make('label', 'remote-row');
-    const checkbox = make('input'); checkbox.type = 'checkbox'; checkbox.checked = remoteSelected.has(entity.entity_id);
-    checkbox.addEventListener('change', () => {
-      if (checkbox.checked && remoteSelected.size >= 30) { checkbox.checked = false; notify('Mỗi lần chỉ đồng bộ tối đa 30 entity.', true); return; }
-      checkbox.checked ? remoteSelected.add(entity.entity_id) : remoteSelected.delete(entity.entity_id);
-      $('#remote-count').textContent = `${remoteSelected.size} được chọn`;
-    });
-    row.append(checkbox, make('span', '', entity.name), make('small', '', `${entity.claim_count || 0} claims · ${entity.approved || 0} đã duyệt`)); list.append(row);
-  });
-  if (!list.children.length) list.append(make('p', 'section-help', 'Không tìm thấy entity.'));
-  $('#remote-count').textContent = `${remoteSelected.size} được chọn`;
-}
-
-$('#load-remote').addEventListener('click', async () => {
-  const button = $('#load-remote');
-  try {
-    button.disabled = true; button.textContent = 'Đang tải...';
-    const data = await remoteRequest('/api/kb/list', credentials());
-    remoteEntities = data.entities || []; remoteSelected = new Set();
-    $('#remote-picker').hidden = false; renderRemoteList();
-    notify(`Đã tải ${remoteEntities.length} entity từ ICMR Knowledge Review.`);
-  } catch (error) { notify(error.message, true); }
-  finally { button.disabled = false; button.textContent = 'Tải danh sách entity'; }
-});
-$('#remote-search').addEventListener('input', renderRemoteList);
-$('#sync-remote').addEventListener('click', async () => {
-  if (!remoteSelected.size) return notify('Hãy chọn ít nhất một entity để đồng bộ.', true);
-  const button = $('#sync-remote');
-  try {
-    button.disabled = true; button.firstChild.textContent = 'Đang đồng bộ...';
-    const data = await remoteRequest('/api/kb/sync', { ...credentials(), entityIds: [...remoteSelected] });
-    const incoming = normalizeKnowledgeBase(data.entities);
-    const merged = new Map((mode === 'mock' ? [] : entities).map(entity => [entity.id, entity]));
-    incoming.forEach(entity => merged.set(entity.id, entity));
-    entities = [...merged.values()]; mode = 'imported';
-    localStorage.setItem('icmr-qa-kb-v1', JSON.stringify(entities));
-    selectedIds = new Set(incoming.map(entity => entity.id));
-    generated = { mcq: [], open: [] }; skipped = { mcq: [], open: [] };
-    $('#kb-password').value = ''; remoteSelected = new Set(); renderRemoteList(); renderEntityList(); renderKb();
-    notify(`Đã đồng bộ ${incoming.length} entity. Claim chưa duyệt chỉ được dùng khi bật chế độ thử nghiệm.`);
-  } catch (error) { notify(error.message, true); }
-  finally { button.disabled = false; button.firstChild.textContent = 'Đồng bộ entity đã chọn '; }
-});
 
 $('#kb-file').addEventListener('change', async event => {
   const file = event.target.files?.[0]; if (!file) return;
