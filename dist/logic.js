@@ -52,9 +52,10 @@ function normalizeFact(fact, entityId, index) {
   const source = clean(fact.source || fact.source_url || (Array.isArray(sources) ? sources.map(s => s.title || s.source_url || s.source_id).join('; ') : ''));
   return {
     id: clean(fact.id || fact.claim_id || `${entityId}-${index + 1}`), aspect,
+    aspect_label: clean(fact.aspect_label || fact.display_name || aspectLabels[aspect] || aspect),
     answer, statement: statement || answer, question: clean(fact.question), source,
     status: clean(fact.status || fact.global_status || 'unreviewed').toLowerCase(),
-    raw: !clean(fact.answer || fact.short_answer || fact.value)
+    raw: fact.raw === true || !clean(fact.answer || fact.short_answer || fact.value)
   };
 }
 
@@ -74,41 +75,51 @@ function shuffle(items, rng) {
 
 function questionFor(entity, fact) {
   if (fact.question) return fact.question;
+  if (fact.raw) return `What does the knowledge base state about ${fact.aspect_label.toLowerCase()} of ${entity.name}?`;
   if (questionTemplates[fact.aspect]) return questionTemplates[fact.aspect](entity.name);
-  return `Theo knowledge base, ${aspectLabels[fact.aspect] || fact.aspect} của ${entity.name} được mô tả như thế nào?`;
+  return `Theo knowledge base, ${fact.aspect_label} của ${entity.name} được mô tả như thế nào?`;
 }
 
-export function generateQuestions({ entities, type, selectedIds, perEntity = 2, seed = 2027 }) {
+function optionAnswer(entity, fact) {
+  if (!fact.raw) return fact.answer;
+  const escaped = entity.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return fact.answer.replace(new RegExp(escaped, 'gi'), 'the subject');
+}
+
+export function generateQuestions({ entities, type, selectedIds, perEntity = 2, seed = 2027, includeUnreviewed = false }) {
   if (!['mcq', 'open'].includes(type)) throw new Error('Loại câu hỏi không hợp lệ.');
   const rng = random(seed);
   const selected = new Set(selectedIds);
   const count = Math.max(1, Math.min(20, Number(perEntity) || 1));
-  const approvedFacts = entities.flatMap(entity => entity.facts.filter(fact => goodStatuses.has(fact.status)).map(fact => ({ entity, fact })));
+  const usable = fact => goodStatuses.has(fact.status) || (includeUnreviewed && ['pending', 'in_progress', 'not_reviewed'].includes(fact.status));
+  const approvedFacts = entities.flatMap(entity => entity.facts.filter(usable).map(fact => ({ entity, fact })));
   const questions = [];
   const skipped = [];
   for (const entity of entities.filter(item => selected.has(item.id))) {
-    const facts = shuffle(entity.facts.filter(fact => goodStatuses.has(fact.status)), rng).slice(0, count);
+    const facts = shuffle(entity.facts.filter(usable), rng).slice(0, count);
     if (!facts.length) skipped.push(`${entity.name}: chưa có fact được duyệt hoặc dữ liệu mẫu.`);
     for (const fact of facts) {
       const base = {
         id: `${type}-${fact.id}`, type, entity_id: entity.id, entity_name: entity.name,
-        fact_id: fact.id, aspect: fact.aspect, question: questionFor(entity, fact),
+        fact_id: fact.id, aspect: fact.aspect, aspect_label: fact.aspect_label, question: questionFor(entity, fact),
         answer: fact.answer, evidence: fact.statement, source: fact.source,
-        kb_status: fact.status, review_status: 'draft'
+        kb_status: fact.status, review_status: 'draft', raw_answer: fact.raw
       };
       if (type === 'open') {
         questions.push(base);
         continue;
       }
+      const correctOption = optionAnswer(entity, fact);
       const alternatives = [...new Map(approvedFacts
         .filter(item => item.entity.id !== entity.id && item.fact.aspect === fact.aspect && key(item.fact.answer) !== key(fact.answer))
-        .map(item => [key(item.fact.answer), item.fact.answer])).values()];
+        .map(item => { const text = optionAnswer(item.entity, item.fact); return [key(text), text]; })).values()]
+        .filter(value => key(value) !== key(correctOption));
       if (alternatives.length < 3) {
-        skipped.push(`${entity.name} · ${aspectLabels[fact.aspect] || fact.aspect}: thiếu 3 phương án nhiễu cùng aspect.`);
+        skipped.push(`${entity.name} · ${fact.aspect_label}: thiếu 3 phương án nhiễu cùng aspect.`);
         continue;
       }
-      const options = shuffle([fact.answer, ...shuffle(alternatives, rng).slice(0, 3)], rng);
-      questions.push({ ...base, options, correct_index: options.findIndex(option => key(option) === key(fact.answer)) });
+      const options = shuffle([correctOption, ...shuffle(alternatives, rng).slice(0, 3)], rng);
+      questions.push({ ...base, options, correct_index: options.findIndex(option => key(option) === key(correctOption)) });
     }
   }
   return { questions, skipped };
