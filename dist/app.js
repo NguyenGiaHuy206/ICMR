@@ -112,7 +112,11 @@ function questionCard(item, index) {
   const evidence = make('div', 'evidence');
   evidence.append(make('strong', '', 'Căn cứ KB · '), document.createTextNode(item.evidence)); card.append(evidence);
   const footer = make('div', 'card-footer');
-  footer.append(make('span', 'card-source', item.source || 'Chưa có nguồn đính kèm'));
+  const sourceBox = make('span', 'card-source');
+  const firstSource = item.source_refs?.find(source => /^https?:\/\//i.test(source.url));
+  if (firstSource) { const link = make('a', '', firstSource.title || firstSource.source_id || firstSource.url); link.href = firstSource.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; sourceBox.append('Nguồn: ', link, firstSource.locator ? ` · ${firstSource.locator}` : ''); }
+  else sourceBox.textContent = item.source || 'Chưa có nguồn đính kèm';
+  footer.append(sourceBox);
   const actions = make('div', 'card-actions');
   const approve = make('button', item.review_status === 'approved' ? 'active' : '', '✓ Duyệt');
   approve.type = 'button'; approve.setAttribute('aria-label', `Duyệt câu ${index + 1}`);

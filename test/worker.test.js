@@ -23,6 +23,7 @@ test('KB proxy reads selected entities without returning credentials or review r
     const body = await response.json();
     assert.equal(body.entities[0].facts[0].status, 'in_progress');
     assert.equal(body.entities[0].facts[0].aspect_label, 'History');
+    assert.equal(body.entities[0].facts[0].source_refs[0].url, 'https://example.test/source');
     assert.ok(!JSON.stringify(body).includes('secret'));
     assert.ok(!JSON.stringify(body).includes('private'));
     assert.equal(calls.length, 4);

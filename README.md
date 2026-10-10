@@ -14,7 +14,7 @@ npm run build
 
 ## Đồng bộ KB thật
 
-Trong tab Knowledge base, nhập tài khoản của ICMR Knowledge Review, tải danh sách entity, chọn tối đa 30 entity và đồng bộ. Backend đăng nhập vào API của trang review trong mỗi yêu cầu rồi chỉ trả về entity, claim, aspect, trạng thái và nguồn cần cho QA. Tài khoản, mật khẩu, session cookie và dữ liệu review cá nhân không được lưu trong mã nguồn hoặc trong trình duyệt sau khi đồng bộ; mật khẩu trong ô nhập được xóa khi đồng bộ thành công. KB được lưu trong `localStorage` của trình duyệt hiện tại.
+Trong tab Knowledge base, nhập tài khoản của ICMR Knowledge Review, tải danh sách entity, chọn tối đa 30 entity và đồng bộ. Backend đăng nhập vào API của trang review trong mỗi yêu cầu rồi chỉ trả về entity, claim, aspect, trạng thái và nguồn cần cho QA. Tài khoản, mật khẩu, session cookie và dữ liệu review cá nhân không được lưu vào mã nguồn hay `localStorage`; mật khẩu trong ô nhập được xóa khi đồng bộ thành công. KB được lưu trong `localStorage` của trình duyệt hiện tại.
 
 Tài khoản MEMBER không có quyền dùng API export của ADMIN. Đồng bộ dùng API danh sách và chi tiết entity, vì vậy không cần quyền admin.
 

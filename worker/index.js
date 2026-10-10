@@ -51,6 +51,10 @@ function compactEntity(detail) {
       id: claim.claim_id, aspect: claim.aspect_id, aspect_label: claim.display_name || claim.aspect_id,
       answer: claim.claim_text, statement: claim.claim_text, raw: true,
       status: String(claim.status || 'PENDING').toLowerCase(),
+      source_refs: (claim.sources || []).map(source => ({
+        source_id: source.source_id, title: source.title, url: source.source_url,
+        locator: source.supporting_locator, evidence_id: source.evidence_id
+      })),
       source: (claim.sources || []).map(source => source.title && source.source_url ? `${source.title} (${source.source_url})` : source.source_url || source.title || source.source_id).filter(Boolean).join('; ')
     }))
   };

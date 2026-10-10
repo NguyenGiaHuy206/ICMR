@@ -48,12 +48,13 @@ function normalizeFact(fact, entityId, index) {
   const answer = clean(fact.answer || fact.short_answer || fact.value || statement);
   const aspect = clean(fact.aspect || fact.aspect_id || 'other');
   if (!answer) throw new Error(`${entityId}: fact ${index + 1} thiếu nội dung.`);
-  const sources = fact.sources || [];
+  const sources = fact.source_refs || fact.sources || [];
   const source = clean(fact.source || fact.source_url || (Array.isArray(sources) ? sources.map(s => s.title || s.source_url || s.source_id).join('; ') : ''));
   return {
     id: clean(fact.id || fact.claim_id || `${entityId}-${index + 1}`), aspect,
     aspect_label: clean(fact.aspect_label || fact.display_name || aspectLabels[aspect] || aspect),
     answer, statement: statement || answer, question: clean(fact.question), source,
+    source_refs: Array.isArray(sources) ? sources.map(s => ({ source_id: clean(s.source_id), title: clean(s.title), url: clean(s.url || s.source_url), locator: clean(s.locator || s.supporting_locator), evidence_id: clean(s.evidence_id) })) : [],
     status: clean(fact.status || fact.global_status || 'unreviewed').toLowerCase(),
     raw: fact.raw === true || !clean(fact.answer || fact.short_answer || fact.value)
   };
@@ -102,7 +103,7 @@ export function generateQuestions({ entities, type, selectedIds, perEntity = 2, 
       const base = {
         id: `${type}-${fact.id}`, type, entity_id: entity.id, entity_name: entity.name,
         fact_id: fact.id, aspect: fact.aspect, aspect_label: fact.aspect_label, question: questionFor(entity, fact),
-        answer: fact.answer, evidence: fact.statement, source: fact.source,
+        answer: fact.answer, evidence: fact.statement, source: fact.source, source_refs: fact.source_refs,
         kb_status: fact.status, review_status: 'draft', raw_answer: fact.raw
       };
       if (type === 'open') {
