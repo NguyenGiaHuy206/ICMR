@@ -50,7 +50,7 @@
           <section class="panel setup-panel">
             <div class="section-kicker">01 / THIẾT LẬP</div>
             <div class="section-heading"><h2>Chọn dữ liệu đầu vào</h2><span id="selection-count" class="subtle-count"></span></div>
-            <p class="section-help">Chọn những entity cần tạo câu hỏi. Chỉ fact đã duyệt hoặc dữ liệu mẫu được sử dụng.</p>
+            <p class="section-help">Chọn những entity cần tạo câu hỏi. Bộ sinh rút đáp án từ claim bằng rule theo aspect, rồi tạo câu hỏi và phương án nhiễu lúc bạn nhấn nút.</p>
             <div class="search-row"><input id="entity-search" type="search" placeholder="Tìm entity..." aria-label="Tìm entity"><button id="select-all" class="text-button" type="button">Chọn tất cả</button></div>
             <div id="entity-list" class="entity-list"></div>
           </section>
@@ -88,7 +88,7 @@
             <h2>Knowledge base</h2>
             <p>Công cụ sử dụng dữ liệu mẫu để thử nghiệm. Bạn có thể nhập JSON hoặc JSONL chứa entity và claim; dữ liệu chỉ được lưu trong trình duyệt này.</p>
             <div class="import-actions"><label for="kb-file" class="primary-button file-button">Nhập file JSON / JSONL <span>↗</span></label><input id="kb-file" type="file" accept=".json,.jsonl,application/json,application/x-ndjson" hidden><button id="restore-mock" type="button" class="secondary-button">Khôi phục dữ liệu mẫu</button></div>
-            <div class="schema-note"><strong>Cấu trúc khuyến nghị</strong><code>{ "entities": [{ "id": "...", "name": "...", "facts": [{ "aspect": "shape", "answer": "...", "statement": "...", "status": "approved", "source": "..." }] }] }</code><small>Hỗ trợ thêm JSONL claim export với entity_id, claim_text, aspect_id. Claim dạng văn bản sẽ dùng toàn câu làm đáp án; nên bổ sung short_answer để tạo trắc nghiệm tốt hơn.</small></div>
+            <div class="schema-note"><strong>Cấu trúc khuyến nghị</strong><code>{ "entities": [{ "id": "...", "name": "...", "facts": [{ "aspect": "shape", "statement": "Bánh chưng có hình vuông.", "status": "approved", "source": "..." }] }] }</code><small>Không cần soạn câu hỏi hay đáp án trong file. Code sẽ rút đáp án từ statement. Hỗ trợ thêm JSONL với entity_id, claim_text, aspect_id; có thể bổ sung short_answer nếu claim quá phức tạp.</small></div>
           </section>
           <section class="panel kb-stats"><div class="section-kicker">CURRENT DATASET</div><h2 id="kb-mode-title">Dữ liệu mẫu</h2><div id="kb-stat-list" class="kb-stat-list"></div><p class="kb-caution">Các fact mẫu dùng để thử luồng tạo QA, chưa được xác thực học thuật. Cần rà soát nguồn và nội dung trước khi đưa vào benchmark.</p></section>
         </div>

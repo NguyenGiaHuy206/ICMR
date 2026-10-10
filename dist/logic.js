@@ -1,4 +1,5 @@
 import { aspectLabels, questionTemplates } from './data.js';
+import { deriveAnswer } from './derive.js';
 
 const clean = value => String(value ?? '').trim();
 const key = value => clean(value).toLocaleLowerCase('vi');
@@ -19,7 +20,7 @@ export function normalizeKnowledgeBase(input) {
     return {
       id, name, localName: clean(entity.localName || entity.local_name),
       country: clean(entity.country || entity.country_id), category: clean(entity.category || entity.category_id),
-      facts: rawFacts.map((fact, index) => normalizeFact(fact, id, index))
+      facts: rawFacts.map((fact, index) => normalizeFact(fact, name, id, index))
     };
   });
   const ids = entities.map(entity => entity.id);
@@ -36,17 +37,21 @@ function groupClaims(rows) {
     const name = clean(claim.entity_name || item.entity_name || item.entity?.name || id);
     if (!id) throw new Error(`Claim dòng ${index + 1} thiếu entity_id.`);
     if (!map.has(id)) map.set(id, { id, name, localName: '', country: '', category: '', facts: [] });
-    map.get(id).facts.push(normalizeFact(claim, id, map.get(id).facts.length));
+    map.get(id).facts.push(normalizeFact(claim, name, id, map.get(id).facts.length));
   });
   return [...map.values()];
 }
 
-function normalizeFact(fact, entityId, index) {
+function normalizeFact(fact, entityName, entityId, index) {
   if (typeof fact === 'string') fact = { statement: fact };
   if (!fact || typeof fact !== 'object') throw new Error(`${entityId}: fact ${index + 1} không hợp lệ.`);
   const statement = clean(fact.statement || fact.claim_text || fact.text);
-  const answer = clean(fact.answer || fact.short_answer || fact.value || statement);
   const aspect = clean(fact.aspect || fact.aspect_id || 'other');
+  const providedAnswer = clean(fact.short_answer || fact.value || (fact.raw ? '' : fact.answer));
+  const derived = providedAnswer
+    ? { answer: providedAnswer, answer_origin: fact.answer_origin || 'provided', confidence: fact.confidence || 'high' }
+    : deriveAnswer(statement, aspect);
+  const answer = derived.answer;
   if (!answer) throw new Error(`${entityId}: fact ${index + 1} thiếu nội dung.`);
   const sources = fact.source_refs || fact.sources || [];
   const source = clean(fact.source || fact.source_url || (Array.isArray(sources) ? sources.map(s => s.title || s.source_url || s.source_id).join('; ') : ''));
@@ -54,9 +59,10 @@ function normalizeFact(fact, entityId, index) {
     id: clean(fact.id || fact.claim_id || `${entityId}-${index + 1}`), aspect,
     aspect_label: clean(fact.aspect_label || fact.display_name || aspectLabels[aspect] || aspect),
     answer, statement: statement || answer, question: clean(fact.question), source,
+    answer_origin: derived.answer_origin, confidence: derived.confidence,
     source_refs: Array.isArray(sources) ? sources.map(s => ({ source_id: clean(s.source_id), title: clean(s.title), url: clean(s.url || s.source_url), locator: clean(s.locator || s.supporting_locator), evidence_id: clean(s.evidence_id) })) : [],
     status: clean(fact.status || fact.global_status || 'unreviewed').toLowerCase(),
-    raw: fact.raw === true || !clean(fact.answer || fact.short_answer || fact.value)
+    raw: derived.answer_origin === 'fallback'
   };
 }
 
@@ -76,15 +82,11 @@ function shuffle(items, rng) {
 
 function questionFor(entity, fact) {
   if (fact.question) return fact.question;
-  if (fact.raw) return `What does the knowledge base state about ${fact.aspect_label.toLowerCase()} of ${entity.name}?`;
+  if (fact.raw) return /[à-ỹ]/iu.test(fact.statement)
+    ? `Theo knowledge base, ${fact.aspect_label} của ${entity.name} được mô tả như thế nào?`
+    : `What does the knowledge base state about ${fact.aspect_label.toLowerCase()} of ${entity.name}?`;
   if (questionTemplates[fact.aspect]) return questionTemplates[fact.aspect](entity.name);
   return `Theo knowledge base, ${fact.aspect_label} của ${entity.name} được mô tả như thế nào?`;
-}
-
-function optionAnswer(entity, fact) {
-  if (!fact.raw) return fact.answer;
-  const escaped = entity.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return fact.answer.replace(new RegExp(escaped, 'gi'), 'the subject');
 }
 
 export function generateQuestions({ entities, type, selectedIds, perEntity = 2, seed = 2027, includeUnreviewed = false }) {
@@ -93,27 +95,31 @@ export function generateQuestions({ entities, type, selectedIds, perEntity = 2, 
   const selected = new Set(selectedIds);
   const count = Math.max(1, Math.min(20, Number(perEntity) || 1));
   const usable = fact => goodStatuses.has(fact.status) || (includeUnreviewed && ['pending', 'in_progress', 'not_reviewed'].includes(fact.status));
-  const approvedFacts = entities.flatMap(entity => entity.facts.filter(usable).map(fact => ({ entity, fact })));
+  const approvedFacts = entities.flatMap(entity => entity.facts.filter(fact => usable(fact) && !fact.raw).map(fact => ({ entity, fact })));
   const questions = [];
   const skipped = [];
   for (const entity of entities.filter(item => selected.has(item.id))) {
-    const facts = shuffle(entity.facts.filter(usable), rng).slice(0, count);
+    const available = entity.facts.filter(usable);
+    const fallbackCount = available.filter(fact => fact.raw).length;
+    if (type === 'mcq' && fallbackCount) skipped.push(`${entity.name}: ${fallbackCount} claim chưa rút được đáp án ngắn; cần biên tập hoặc bổ sung short_answer.`);
+    const facts = shuffle(available.filter(fact => type !== 'mcq' || !fact.raw), rng).slice(0, count);
     if (!facts.length) skipped.push(`${entity.name}: chưa có fact được duyệt hoặc dữ liệu mẫu.`);
     for (const fact of facts) {
       const base = {
         id: `${type}-${fact.id}`, type, entity_id: entity.id, entity_name: entity.name,
         fact_id: fact.id, aspect: fact.aspect, aspect_label: fact.aspect_label, question: questionFor(entity, fact),
         answer: fact.answer, evidence: fact.statement, source: fact.source, source_refs: fact.source_refs,
-        kb_status: fact.status, review_status: 'draft', raw_answer: fact.raw
+        kb_status: fact.status, review_status: 'draft', raw_answer: fact.raw,
+        answer_origin: fact.answer_origin, confidence: fact.confidence
       };
       if (type === 'open') {
         questions.push(base);
         continue;
       }
-      const correctOption = optionAnswer(entity, fact);
+      const correctOption = fact.answer;
       const alternatives = [...new Map(approvedFacts
         .filter(item => item.entity.id !== entity.id && item.fact.aspect === fact.aspect && key(item.fact.answer) !== key(fact.answer))
-        .map(item => { const text = optionAnswer(item.entity, item.fact); return [key(text), text]; })).values()]
+        .map(item => [key(item.fact.answer), item.fact.answer])).values()]
         .filter(value => key(value) !== key(correctOption));
       if (alternatives.length < 3) {
         skipped.push(`${entity.name} · ${fact.aspect_label}: thiếu 3 phương án nhiễu cùng aspect.`);
@@ -127,9 +133,9 @@ export function generateQuestions({ entities, type, selectedIds, perEntity = 2, 
 }
 
 export function toCsv(questions) {
-  const header = ['type', 'entity_id', 'entity_name', 'fact_id', 'aspect', 'question', 'answer', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_letter', 'evidence', 'source', 'kb_status', 'review_status'];
+  const header = ['type', 'entity_id', 'entity_name', 'fact_id', 'aspect', 'question', 'answer', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_letter', 'evidence', 'source', 'kb_status', 'answer_origin', 'confidence', 'review_status'];
   const quote = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
   const rows = questions.map(q => [q.type, q.entity_id, q.entity_name, q.fact_id, q.aspect, q.question, q.answer,
-    ...(q.options || ['', '', '', '']), q.options ? 'ABCD'[q.correct_index] : '', q.evidence, q.source, q.kb_status, q.review_status]);
+    ...(q.options || ['', '', '', '']), q.options ? 'ABCD'[q.correct_index] : '', q.evidence, q.source, q.kb_status, q.answer_origin, q.confidence, q.review_status]);
   return '\uFEFF' + [header, ...rows].map(row => row.map(quote).join(',')).join('\r\n');
 }

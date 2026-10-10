@@ -94,6 +94,7 @@ function questionCard(item, index) {
   tags.append(make('span', 'tag', item.aspect_label || aspectLabels[item.aspect] || item.aspect));
   const validated = ['approved', 'adjudicated', 'accepted', 'verified'].includes(item.kb_status);
   tags.append(make('span', `tag ${item.kb_status === 'mock' || !validated ? 'mock' : 'approved'}`, item.kb_status === 'mock' ? 'Dữ liệu mẫu' : validated ? 'Đã duyệt' : 'Chưa duyệt'));
+  if (item.answer_origin === 'rule') tags.append(make('span', 'tag approved', 'Code trích xuất'));
   if (item.raw_answer) tags.append(make('span', 'tag mock', 'Cần rút gọn đáp án'));
   top.append(tags); card.append(top);
   card.append(make('p', 'card-question', item.question));
