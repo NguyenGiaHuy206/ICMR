@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#143b39">
+  <meta name="description" content="Tạo và rà soát câu hỏi trắc nghiệm, câu hỏi mở từ knowledge base văn hóa ICMR.">
+  <title>ICMR · QA Studio</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#top" aria-label="ICMR QA Studio">
+        <span class="brand-mark">I<span>·</span></span>
+        <span><strong>ICMR</strong><small>QA STUDIO</small></span>
+      </a>
+      <div class="side-section-label">WORKSPACE</div>
+      <nav class="nav" aria-label="Các chức năng">
+        <button class="nav-item active" data-view="mcq" type="button"><span class="nav-icon">▦</span> Câu hỏi trắc nghiệm <span class="nav-index">01</span></button>
+        <button class="nav-item" data-view="open" type="button"><span class="nav-icon">✎</span> Câu hỏi mở <span class="nav-index">02</span></button>
+        <button class="nav-item" data-view="kb" type="button"><span class="nav-icon">◫</span> Knowledge base <span class="nav-index">03</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-note"><span class="pulse"></span><span>Chế độ dữ liệu mẫu<br><small>Chưa kết nối KB trực tiếp</small></span></div>
+        <p>SEA-RAG Research Toolkit<br><span>ICMR · 2027</span></p>
+      </div>
+    </aside>
+
+    <main id="top" class="main">
+      <header class="topbar">
+        <div class="breadcrumbs">ICMR <span>/</span> <strong id="breadcrumb">Câu hỏi trắc nghiệm</strong></div>
+        <div class="topbar-right"><span class="dot"></span> QA GENERATION WORKSPACE</div>
+      </header>
+
+      <section class="intro">
+        <div class="intro-copy">
+          <div class="eyebrow"><span class="eyebrow-line"></span> DATASET CONSTRUCTION / SEA-RAG</div>
+          <h1 id="page-title">Sinh câu hỏi <em>trắc nghiệm</em></h1>
+          <p id="page-description">Tạo câu hỏi từ các fact văn hóa. Phương án nhiễu được chọn trong cùng một aspect để câu hỏi có giá trị đánh giá.</p>
+        </div>
+        <div class="intro-monogram" aria-hidden="true">Q<span>&</span>A</div>
+      </section>
+
+      <div id="notice" class="notice" role="status" hidden></div>
+
+      <section id="generator-view" class="workspace-grid">
+        <div class="setup-column">
+          <section class="panel setup-panel">
+            <div class="section-kicker">01 / THIẾT LẬP</div>
+            <div class="section-heading"><h2>Chọn dữ liệu đầu vào</h2><span id="selection-count" class="subtle-count"></span></div>
+            <p class="section-help">Chọn những entity cần tạo câu hỏi. Chỉ fact đã duyệt hoặc dữ liệu mẫu được sử dụng.</p>
+            <div class="search-row"><input id="entity-search" type="search" placeholder="Tìm entity..." aria-label="Tìm entity"><button id="select-all" class="text-button" type="button">Chọn tất cả</button></div>
+            <div id="entity-list" class="entity-list"></div>
+          </section>
+          <section class="panel settings-panel">
+            <div class="section-kicker">02 / CẤU HÌNH</div>
+            <h2>Thiết lập tạo câu hỏi</h2>
+            <label class="field-label" for="per-entity">Số câu tối đa / entity</label>
+            <div class="number-row"><input id="per-entity" type="number" min="1" max="20" value="3"><span>câu từ các fact khác nhau</span></div>
+            <label class="field-label" for="seed">Seed tái lập kết quả</label>
+            <input id="seed" type="number" value="2027">
+            <p class="field-note">Dùng cùng seed để lặp lại thứ tự fact và đáp án.</p>
+            <button id="generate" class="primary-button" type="button">Sinh cặp QA <span aria-hidden="true">↗</span></button>
+          </section>
+        </div>
+
+        <div class="results-column">
+          <section class="panel results-panel">
+            <div class="results-head"><div><div class="section-kicker">03 / KẾT QUẢ</div><h2 id="results-title">Bộ câu hỏi trắc nghiệm</h2></div><span id="result-count" class="result-count">0 câu</span></div>
+            <div id="result-toolbar" class="result-toolbar" hidden>
+              <span id="result-summary"></span>
+              <div class="toolbar-actions"><button id="export-json" type="button">↓ JSON</button><button id="export-csv" type="button">↓ CSV</button></div>
+            </div>
+            <div id="skipped" class="skipped" hidden></div>
+            <div id="results" class="results"></div>
+            <div id="empty-results" class="empty-state"><div class="empty-glyph">?</div><h3>Chưa có câu hỏi nào</h3><p>Chọn entity và nhấn “Sinh cặp QA” để xem kết quả tại đây.</p></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="kb-view" class="kb-view" hidden>
+        <div class="kb-top-grid">
+          <section class="panel kb-import">
+            <div class="section-kicker">DATA SOURCE / IMPORT</div>
+            <h2>Knowledge base</h2>
+            <p>Hiện sử dụng dữ liệu mẫu từ tài liệu dự án. Nhập JSON hoặc JSONL để dùng các entity và claim thật; dữ liệu được lưu trong trình duyệt này.</p>
+            <div class="import-actions"><label for="kb-file" class="primary-button file-button">Nhập file JSON / JSONL <span>↗</span></label><input id="kb-file" type="file" accept=".json,.jsonl,application/json,application/x-ndjson" hidden><button id="restore-mock" type="button" class="secondary-button">Khôi phục dữ liệu mẫu</button></div>
+            <div class="schema-note"><strong>Cấu trúc khuyến nghị</strong><code>{ "entities": [{ "id": "...", "name": "...", "facts": [{ "aspect": "shape", "answer": "...", "statement": "...", "status": "approved", "source": "..." }] }] }</code><small>Hỗ trợ thêm JSONL claim export với entity_id, claim_text, aspect_id. Claim dạng văn bản sẽ dùng toàn câu làm đáp án; nên bổ sung short_answer để tạo trắc nghiệm tốt hơn.</small></div>
+          </section>
+          <section class="panel kb-stats"><div class="section-kicker">CURRENT DATASET</div><h2 id="kb-mode-title">Dữ liệu mẫu</h2><div id="kb-stat-list" class="kb-stat-list"></div><p class="kb-caution">Các fact mẫu dùng để thử luồng tạo QA, chưa được xác thực học thuật. Cần rà soát nguồn và nội dung trước khi đưa vào benchmark.</p></section>
+        </div>
+        <section class="panel kb-browser"><div class="section-heading"><div><div class="section-kicker">ENTITY / FACT EXPLORER</div><h2>Khám phá dữ liệu</h2></div><input id="kb-search" type="search" placeholder="Tìm entity hoặc fact..." aria-label="Tìm trong knowledge base"></div><div id="kb-entities" class="kb-entities"></div></section>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
