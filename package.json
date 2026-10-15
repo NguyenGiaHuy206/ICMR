@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "serve": "python -m http.server 4173 --directory dist"
+    "serve": "node server/local.mjs"
   }
 }

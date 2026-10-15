@@ -1,5 +1,5 @@
 import { mockEntities, aspectLabels } from './data.js';
-import { addEntity, addFact, generateQuestions, normalizeKnowledgeBase, toCsv } from './logic.js';
+import { addEntity, addFact, updateFact, removeFact, generateQuestions, normalizeKnowledgeBase, toCsv } from './logic.js';
 
 const $ = selector => document.querySelector(selector);
 const make = (tag, className = '', content = '') => {
@@ -42,7 +42,7 @@ function setView(next) {
   if (next === 'open') { title.append('Sinh câu hỏi '); title.append(make('em', '', 'mở')); }
   if (next === 'kb') { title.append('Quản lý '); title.append(make('em', '', 'knowledge base')); }
   $('#page-description').textContent = next === 'mcq'
-    ? 'Tạo câu hỏi dựa trên ảnh mà không nêu tên entity. Phương án nhiễu được chọn trong cùng một aspect để câu hỏi có giá trị đánh giá.'
+    ? 'Tạo câu hỏi dựa trên ảnh mà không nêu tên entity. Nhiễu KB chỉ dùng fact cùng danh mục và đúng khía cạnh câu hỏi; Qwen tạo phần còn thiếu.'
     : next === 'open'
       ? 'Tạo câu hỏi tự luận ngắn về đối tượng trong ảnh, kèm đáp án chuẩn và căn cứ từ knowledge base.'
       : 'Xem từng entity và fact, nhập dữ liệu thật khi knowledge base sẵn sàng.';
@@ -61,7 +61,7 @@ function renderEntityList() {
       $('#selection-count').textContent = `${selectedIds.size}/${entities.length} entity`;
     });
     const avatar = make('span', 'entity-avatar', entity.name.slice(0, 1));
-    row.append(checkbox, avatar, make('span', 'entity-name', entity.name), make('span', 'entity-meta', `${entity.facts.length} facts`));
+      row.append(checkbox, avatar, make('span', 'entity-name', entity.name), make('span', 'entity-meta', `${entity.facts.length} facts · ${entity.category || 'Chưa gán danh mục'}`));
     list.append(row);
   }
   if (!list.children.length) list.append(make('p', 'section-help', 'Không tìm thấy entity.'));
@@ -96,6 +96,8 @@ function questionCard(item, index) {
   tags.append(make('span', `tag ${item.kb_status === 'mock' || !validated ? 'mock' : 'approved'}`, item.kb_status === 'mock' ? 'Dữ liệu mẫu' : validated ? 'Đã duyệt' : 'Chưa duyệt'));
   if (item.answer_origin === 'rule') tags.append(make('span', 'tag approved', 'Code trích xuất'));
   if (item.raw_answer) tags.append(make('span', 'tag mock', 'Cần rút gọn đáp án'));
+  if (item.option_sources?.includes('llm')) tags.append(make('span', 'tag mock', `${item.option_sources.filter(source => source === 'kb').length} nhiễu KB · ${item.option_sources.filter(source => source === 'llm').length} nhiễu LLM`));
+  if (item.option_sources?.includes('fallback')) tags.append(make('span', 'tag mock', `${item.option_sources.filter(source => source === 'fallback').length} nhiễu dự phòng`));
   top.append(tags); card.append(top);
   card.append(make('p', 'card-question', item.question));
   if (item.type === 'mcq') {
@@ -109,7 +111,7 @@ function questionCard(item, index) {
     answer.append(make('strong', '', 'ĐÁP ÁN CHUẨN'), make('span', '', item.answer)); card.append(answer);
   }
   const evidence = make('div', 'evidence');
-  evidence.append(make('strong', '', 'Căn cứ KB · '), document.createTextNode(item.evidence)); card.append(evidence);
+  evidence.append(make('strong', '', `Căn cứ KB · ${item.evidence_fact_id || item.fact_id} · `), document.createTextNode(item.evidence || 'Xem fact gốc trong knowledge base.')); card.append(evidence);
   const footer = make('div', 'card-footer');
   const sourceBox = make('span', 'card-source');
   const firstSource = item.source_refs?.find(source => /^https?:\/\//i.test(source.url));
@@ -162,7 +164,7 @@ function renderKb() {
   if (entities.some(entity => entity.id === previousEntity)) factEntity.value = previousEntity;
   $('#kb-mode-title').textContent = mode === 'mock' ? 'Dữ liệu mẫu' : 'Dữ liệu đã nhập';
   const facts = entities.flatMap(entity => entity.facts);
-  const stats = [['Entity', entities.length], ['Fact / claim', facts.length], ['Sẵn sàng', facts.filter(f => ['mock', 'approved', 'adjudicated', 'accepted', 'verified'].includes(f.status)).length]];
+    const stats = [['Entity', entities.length], ['Aspect claim', facts.length], ['Sẵn sàng', facts.filter(f => ['mock', 'approved', 'adjudicated', 'accepted', 'verified', 'machine_accepted'].includes(f.status)).length], ['Chưa gán danh mục', entities.filter(entity => !entity.category).length]];
   const statList = $('#kb-stat-list'); statList.replaceChildren();
   stats.forEach(([label, value]) => { const block = make('div', 'kb-stat'); block.append(make('strong', '', String(value)), make('span', '', label)); statList.append(block); });
   const search = $('#kb-search').value.trim().toLocaleLowerCase('vi');
@@ -170,9 +172,47 @@ function renderKb() {
   entities.filter(entity => `${entity.name} ${entity.facts.map(f => f.statement).join(' ')}`.toLocaleLowerCase('vi').includes(search)).forEach(entity => {
     const details = make('details', 'kb-entity');
     const summary = make('summary'); summary.append(make('strong', '', entity.name), make('span', '', `${entity.facts.length} facts  ＋`)); details.append(summary);
-    entity.facts.forEach(fact => {
-      const block = make('div', 'kb-fact'); block.append(make('strong', '', aspectLabels[fact.aspect] || fact.aspect), make('p', '', fact.statement), make('small', '', `Đáp án: ${fact.answer} · ${fact.answer_origin === 'fallback' ? 'cần biên tập đáp án ngắn' : fact.answer_origin === 'rule' ? 'code trích xuất' : 'đã nhập đáp án ngắn'} · ${fact.source || 'Chưa có nguồn'}`)); details.append(block);
-    }); browser.append(details);
+    const categoryForm = make('div', 'entity-category-form');
+    const categoryLabel = make('label', '', 'Danh mục');
+    const category = make('input'); category.value = entity.category || ''; category.placeholder = 'Ví dụ: Đồ vật'; category.setAttribute('list', 'category-options');
+    const saveCategory = make('button', '', 'Lưu danh mục'); saveCategory.type = 'button';
+    saveCategory.addEventListener('click', () => {
+      const value = category.value.trim();
+      if (!value) return notify('Mỗi entity cần có danh mục để tạo nhiễu cùng nhóm.', true);
+      saveKb(entities.map(item => item.id === entity.id ? { ...item, category: value } : item));
+      notify(`Đã gán danh mục “${value}” cho ${entity.name}.`);
+    });
+    categoryLabel.append(category); categoryForm.append(categoryLabel, saveCategory); details.append(categoryForm);
+      entity.facts.forEach(fact => {
+        const block = make('div', 'kb-fact');
+        const actions = make('div', 'fact-actions');
+        const edit = make('button', '', 'Sửa'); edit.type = 'button';
+        const remove = make('button', 'danger', 'Xóa'); remove.type = 'button';
+        const editor = make('form', 'fact-editor'); editor.hidden = true;
+        const aspect = make('input'); aspect.value = fact.aspect;
+        const statement = make('textarea'); statement.value = fact.statement;
+        const source = make('input'); source.value = fact.source || '';
+        const save = make('button', '', 'Lưu fact'); save.type = 'submit';
+        const cancel = make('button', '', 'Hủy'); cancel.type = 'button';
+        const field = (label, control) => { const item = make('label', '', label); item.append(control); return item; };
+        editor.append(field('Aspect', aspect), field('Nội dung fact', statement), field('Nguồn', source), save, cancel);
+        edit.addEventListener('click', () => { editor.hidden = false; edit.hidden = true; });
+        cancel.addEventListener('click', () => { editor.hidden = true; edit.hidden = false; });
+        editor.addEventListener('submit', event => {
+          event.preventDefault();
+          try {
+            saveKb(updateFact(entities, { entityId: entity.id, factId: fact.id, aspect: aspect.value, statement: statement.value, source: source.value }));
+            notify('Đã cập nhật fact.');
+          } catch (error) { notify(error.message, true); }
+        });
+        remove.addEventListener('click', () => {
+          if (!confirm(`Xóa fact “${fact.statement}”?`)) return;
+          try { saveKb(removeFact(entities, entity.id, fact.id)); notify('Đã xóa fact.'); } catch (error) { notify(error.message, true); }
+        });
+        actions.append(edit, remove);
+        block.append(make('strong', '', aspectLabels[fact.aspect] || fact.aspect), make('p', '', fact.statement), make('small', '', `Golden answer sẽ được model tạo khi sinh QA · ${fact.source || 'Chưa có nguồn'}`), actions, editor);
+        details.append(block);
+      }); browser.append(details);
   });
   if (!browser.children.length) browser.append(make('p', 'section-help', 'Không tìm thấy dữ liệu phù hợp.'));
   $('.sidebar-note span:last-child').firstChild.textContent = mode === 'mock' ? 'Chế độ dữ liệu mẫu' : 'KB đã nhập';
@@ -219,33 +259,99 @@ $('#fact-form').addEventListener('submit', event => {
     saveKb(next); selectedIds.add(fields.entityId); renderEntityList();
     form.reset(); $('#fact-entity').value = fields.entityId;
     $('#custom-aspect-label').hidden = true; $('#custom-aspect').required = false;
-    notify(fact.raw ? 'Đã thêm fact. Claim này cần đáp án ngắn để tạo trắc nghiệm; bạn vẫn có thể thử câu hỏi mở.' : `Đã thêm fact. Đáp án: ${fact.answer}. Chuyển sang chức năng QA để tạo câu hỏi.`);
+    notify('Đã thêm fact. Model có thể tạo nhiều câu hỏi và golden answer từ nội dung này.');
   } catch (error) { notify(error.message, true); }
 });
 $('#select-all').addEventListener('click', () => { selectedIds = new Set(entities.map(entity => entity.id)); renderEntityList(); });
-$('#generate').addEventListener('click', () => {
+$('#deselect-all').addEventListener('click', () => { selectedIds = new Set(); renderEntityList(); });
+async function refreshLlmStatus() {
+  try {
+    const response = await fetch('./api/llm-status');
+    const status = await response.json();
+    $('#llm-status').textContent = status.available ? `${status.provider} sẵn sàng (${status.model}).` : (status.reason || 'LLM chưa sẵn sàng.');
+  } catch { $('#llm-status').textContent = 'Không kiểm tra được kết nối LLM.'; }
+}
+
+$('#generate').addEventListener('click', async () => {
   if (!selectedIds.size) return notify('Hãy chọn ít nhất một entity.', true);
-  const result = generateQuestions({ entities, type: view, selectedIds, perEntity: $('#per-entity').value, seed: $('#seed').value, includeUnreviewed: $('#include-drafts').checked });
+    if (view === 'mcq') {
+      const missingCategory = entities.filter(entity => selectedIds.has(entity.id) && !entity.category);
+      if (missingCategory.length) return notify(`Hãy gán danh mục cho entity trước khi tạo trắc nghiệm: ${missingCategory.map(entity => entity.name).join(', ')}.`, true);
+    }
+  const button = $('#generate'); button.disabled = true; button.textContent = 'Đang sinh QA...';
+  const settings = { entities, type: view, selectedIds, perEntity: $('#per-entity').value, perFact: $('#per-fact').value, seed: $('#seed').value, includeUnreviewed: $('#include-drafts').checked };
+  let result = generateQuestions(settings);
+  let llmError = '';
+  if (result.llmItems.length) {
+    try {
+      const qaPairs = {};
+      const failures = {};
+      const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+      for (let offset = 0; offset < result.llmItems.length; offset++) {
+          const item = result.llmItems[offset];
+          button.textContent = `Đang phân tích fact ${offset + 1}/${result.llmItems.length}: ${item.entity_name} · ${item.aspect_label}...`;
+          let lastError = '';
+          for (let attempt = 1; attempt <= 4; attempt++) {
+            try {
+              const response = await fetch('./api/generate-qa', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: view, items: [item] }) });
+              const data = await response.json();
+              if (!response.ok) {
+                const error = new Error(data.error || `HTTP ${response.status}`);
+                error.retryAfter = response.status === 429 ? Math.max(5, Number(data.retry_after_seconds) || 10) : 0;
+                throw error;
+              }
+              const pairs = data.qa_pairs?.[item.fact_id];
+              if (!Array.isArray(pairs) || !pairs.length) {
+                const details = Array.isArray(data.warnings?.[item.fact_id]) ? data.warnings[item.fact_id].join(' ') : '';
+                throw new Error(details || 'Model không trả qa_pairs cho fact này.');
+              }
+              qaPairs[item.fact_id] = pairs;
+              lastError = '';
+              break;
+            } catch (error) {
+              lastError = error.message;
+              if (attempt < 4) {
+                const seconds = error.retryAfter || Math.min(8, 2 ** attempt);
+                button.textContent = `Vilao tạm giới hạn. Chờ ${seconds}s rồi thử lại ${item.entity_name}...`;
+                await wait(seconds * 1000);
+              }
+            }
+          }
+          if (lastError) failures[item.fact_id] = `thất bại sau 4 lần thử: ${lastError}`;
+      }
+      result = generateQuestions({ ...settings, llmQaPairs: qaPairs, llmErrors: failures });
+    } catch (error) { llmError = error.message; }
+  }
   generated[view] = result.questions; skipped[view] = result.skipped; renderResults();
-  if (!result.questions.length) notify('Không tạo được câu hỏi. Kiểm tra trạng thái fact và số phương án nhiễu.', true);
+  button.disabled = false; button.replaceChildren('Sinh cặp QA ', make('span', '', '↗'));
+  if (llmError) notify(`Không thể hoàn tất sinh QA: ${llmError}`, true);
+  else if (!result.questions.length) notify('Model chưa tạo được QA hợp lệ. Kiểm tra API key, model và nội dung fact.', true);
   else notify(`Đã tạo ${result.questions.length} câu ${view === 'mcq' ? 'trắc nghiệm' : 'mở'}. Hãy ghép ảnh đúng entity và rà soát trước khi xuất.`);
 });
 $('#export-json').addEventListener('click', () => download(`icmr-${view}-qa.json`, JSON.stringify(generated[view], null, 2), 'application/json;charset=utf-8'));
 $('#export-csv').addEventListener('click', () => download(`icmr-${view}-qa.csv`, toCsv(generated[view]), 'text/csv;charset=utf-8'));
 $('#restore-mock').addEventListener('click', () => { entities = mock; mode = 'mock'; selectedIds = new Set(entities.map(e => e.id)); generated = { mcq: [], open: [] }; skipped = { mcq: [], open: [] }; localStorage.removeItem('icmr-qa-kb-v1'); renderEntityList(); renderKb(); notify('Đã khôi phục knowledge base mẫu.'); });
 
-$('#kb-file').addEventListener('change', async event => {
-  const file = event.target.files?.[0]; if (!file) return;
+async function importKbFiles(event) {
+  const files = [...(event.target.files || [])].filter(file => !file.name.startsWith('_') && /\.jsonl?$/i.test(file.name));
+  if (!files.length) return notify('Không tìm thấy entity JSON trong lựa chọn.', true);
   try {
-    const content = await file.text();
-    const parsed = file.name.toLowerCase().endsWith('.jsonl') ? content.split(/\r?\n/).filter(Boolean).map((line, i) => { try { return JSON.parse(line); } catch { throw new Error(`JSONL dòng ${i + 1} không hợp lệ.`); } }) : JSON.parse(content);
-    const normalized = normalizeKnowledgeBase(parsed);
+    const imported = [];
+    for (const file of files) {
+      const content = await file.text();
+      const parsed = file.name.toLowerCase().endsWith('.jsonl') ? content.split(/\r?\n/).filter(Boolean).map((line, i) => { try { return JSON.parse(line); } catch { throw new Error(`${file.name}: JSONL dòng ${i + 1} không hợp lệ.`); } }) : JSON.parse(content);
+      try { imported.push(...normalizeKnowledgeBase(parsed)); }
+      catch (error) { throw new Error(`${file.webkitRelativePath || file.name}: ${error.message}`); }
+    }
+    const normalized = [...new Map(imported.map(entity => [entity.id, entity])).values()];
     localStorage.setItem('icmr-qa-kb-v1', JSON.stringify(normalized));
     entities = normalized; mode = 'imported'; selectedIds = new Set(entities.map(e => e.id));
     generated = { mcq: [], open: [] }; skipped = { mcq: [], open: [] };
-    renderEntityList(); renderKb(); notify(`Đã nhập ${entities.length} entity và ${entities.flatMap(e => e.facts).length} fact.`);
+    renderEntityList(); renderKb(); notify(`Đã nhập ${entities.length} entity và ${entities.flatMap(e => e.facts).length} aspect claim theo schema KB.`);
   } catch (error) { notify(`Không nhập được file: ${error.message}`, true); }
   event.target.value = '';
-});
+}
+$('#kb-file').addEventListener('change', importKbFiles);
+$('#kb-folder').addEventListener('change', importKbFiles);
 
-renderEntityList(); renderKb(); setView('mcq');
+renderEntityList(); renderKb(); setView('mcq'); refreshLlmStatus();

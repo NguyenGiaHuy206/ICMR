@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#143b39">
   <meta name="description" content="Tạo và rà soát câu hỏi trắc nghiệm, câu hỏi mở từ knowledge base văn hóa ICMR.">
   <title>ICMR · QA Studio</title>
-  <link rel="stylesheet" href="./styles.css">
-  <link rel="stylesheet" href="./extras.css">
+  <link rel="stylesheet" href="./styles.css?v=20261011-4">
+  <link rel="stylesheet" href="./extras.css?v=20261011-4">
 </head>
 <body>
   <div class="app-shell">
@@ -38,7 +38,7 @@
         <div class="intro-copy">
           <div class="eyebrow"><span class="eyebrow-line"></span> DATASET CONSTRUCTION / SEA-RAG</div>
           <h1 id="page-title">Sinh câu hỏi <em>trắc nghiệm</em></h1>
-          <p id="page-description">Tạo câu hỏi dựa trên ảnh mà không nêu tên entity. Phương án nhiễu được chọn trong cùng một aspect để câu hỏi có giá trị đánh giá.</p>
+          <p id="page-description">Tạo câu hỏi dựa trên ảnh mà không nêu tên entity. Phương án nhiễu ưu tiên từ KB cùng aspect; LLM bổ sung khi KB chưa đủ.</p>
         </div>
         <div class="intro-monogram" aria-hidden="true">Q<span>&</span>A</div>
       </section>
@@ -51,18 +51,21 @@
             <div class="section-kicker">01 / THIẾT LẬP</div>
             <div class="section-heading"><h2>Chọn dữ liệu đầu vào</h2><span id="selection-count" class="subtle-count"></span></div>
             <p class="section-help">Chọn entity cần tạo câu hỏi. Câu hỏi sẽ dùng cách gọi “món ăn trong ảnh”, “đồ vật trong ảnh”...; khi sử dụng kết quả cần ghép ảnh tương ứng theo entity_id.</p>
-            <div class="search-row"><input id="entity-search" type="search" placeholder="Tìm entity..." aria-label="Tìm entity"><button id="select-all" class="text-button" type="button">Chọn tất cả</button></div>
+            <div class="search-row"><input id="entity-search" type="search" placeholder="Tìm entity..." aria-label="Tìm entity"><div class="selection-actions"><button id="select-all" class="text-button" type="button">Chọn tất cả</button><button id="deselect-all" class="text-button" type="button">Bỏ chọn tất cả</button></div></div>
             <div id="entity-list" class="entity-list"></div>
           </section>
           <section class="panel settings-panel">
             <div class="section-kicker">02 / CẤU HÌNH</div>
             <h2>Thiết lập tạo câu hỏi</h2>
-            <label class="field-label" for="per-entity">Số câu tối đa / entity</label>
-            <div class="number-row"><input id="per-entity" type="number" min="1" max="20" value="3"><span>câu từ các fact khác nhau</span></div>
+            <label class="field-label" for="per-entity">Số fact tối đa / entity</label>
+            <div class="number-row"><input id="per-entity" type="number" min="1" max="20" value="3"><span>fact gửi tới model</span></div>
+            <label class="field-label" for="per-fact">Số câu tối đa / fact</label>
+            <div class="number-row"><input id="per-fact" type="number" min="1" max="10" value="3"><span>mỗi câu khai thác một mệnh đề</span></div>
             <label class="field-label" for="seed">Seed tái lập kết quả</label>
             <input id="seed" type="number" value="2027">
             <p class="field-note">Dùng cùng seed để lặp lại thứ tự fact và đáp án.</p>
             <label class="draft-toggle"><input id="include-drafts" type="checkbox"> <span>Dùng claim đang chờ duyệt <small>Chỉ để thử nghiệm; kết quả cần được xác minh.</small></span></label>
+            <p id="llm-status" class="field-note" role="status">Đang kiểm tra kết nối LLM...</p>
             <button id="generate" class="primary-button" type="button">Sinh cặp QA <span aria-hidden="true">↗</span></button>
           </section>
         </div>
@@ -87,8 +90,8 @@
             <div class="section-kicker">DATA SOURCE / IMPORT</div>
             <h2>Knowledge base</h2>
             <p>Công cụ sử dụng dữ liệu mẫu để thử nghiệm. Bạn có thể nhập JSON hoặc JSONL chứa entity và claim; dữ liệu chỉ được lưu trong trình duyệt này.</p>
-            <div class="import-actions"><label for="kb-file" class="primary-button file-button">Nhập file JSON / JSONL <span>↗</span></label><input id="kb-file" type="file" accept=".json,.jsonl,application/json,application/x-ndjson" hidden><button id="restore-mock" type="button" class="secondary-button">Khôi phục dữ liệu mẫu</button></div>
-            <div class="schema-note"><strong>Cấu trúc khuyến nghị</strong><code>{ "entities": [{ "id": "...", "name": "...", "facts": [{ "aspect": "shape", "statement": "Bánh chưng có hình vuông.", "status": "approved", "source": "..." }] }] }</code><small>Không cần soạn câu hỏi hay đáp án trong file. Code sẽ rút đáp án từ statement. Hỗ trợ thêm JSONL với entity_id, claim_text, aspect_id; có thể bổ sung short_answer nếu claim quá phức tạp.</small></div>
+            <div class="import-actions"><label for="kb-file" class="primary-button file-button">Nhập entity JSON / JSONL <span>↗</span></label><input id="kb-file" type="file" multiple accept=".json,.jsonl,application/json,application/x-ndjson" hidden><label for="kb-folder" class="secondary-button file-button">Nhập thư mục KB</label><input id="kb-folder" type="file" webkitdirectory directory multiple accept=".json" hidden><button id="restore-mock" type="button" class="secondary-button">Khôi phục dữ liệu mẫu</button></div>
+            <div class="schema-note"><strong>Schema DB / knowledge_base v1.0</strong><code>{ "category": "Architecture & Heritage", "country": "Indonesia", "entity_name": "Borobudur", "entity_id": "entity_...", "schema_version": "1.0", "synthetic": false, "aspects": [{ "id": "aspect-...", "aspect_name": "Historical significance", "claim": "A long accepted paragraph...", "claim_id": "claim-...", "verification": { "status": "machine_accepted", "provider": "Gemini", "model": "gemini-3.8-flash" } }] }</code><small>Có thể chọn một hay nhiều entity JSON, hoặc chọn cả thư mục knowledge_base. File _manifest.json được bỏ qua. entity_id, aspect id và claim_id được giữ để truy hồi và đánh giá.</small></div>
           </section>
           <section class="panel kb-stats"><div class="section-kicker">CURRENT DATASET</div><h2 id="kb-mode-title">Dữ liệu mẫu</h2><div id="kb-stat-list" class="kb-stat-list"></div><p class="kb-caution">Các fact mẫu dùng để thử luồng tạo QA, chưa được xác thực học thuật. Cần rà soát nguồn và nội dung trước khi đưa vào benchmark.</p></section>
         </div>
@@ -97,17 +100,17 @@
             <form id="entity-form" class="kb-form">
               <label>Tên entity <input name="name" required placeholder="Ví dụ: Bánh tét"></label>
               <label>Tên địa phương (tùy chọn) <input name="localName" placeholder="Tên gọi khác"></label>
-              <div class="kb-form-row"><label>Quốc gia <input name="country" placeholder="Việt Nam"></label><label>Danh mục <input name="category" placeholder="Ẩm thực"></label></div>
+              <div class="kb-form-row"><label>Quốc gia <input name="country" placeholder="Việt Nam"></label><label>Danh mục <input name="category" list="category-options" required placeholder="Ví dụ: Đồ vật"></label></div>
+              <datalist id="category-options"><option value="Ẩm thực"></option><option value="Đồ vật"></option><option value="Trò chơi dân gian"></option><option value="Trang phục"></option><option value="Công trình / di sản"></option><option value="Địa điểm"></option></datalist>
               <button class="primary-button" type="submit">Thêm entity <span aria-hidden="true">↗</span></button>
             </form>
           </section>
-          <section class="panel kb-form-panel"><div class="section-kicker">ADD / FACT</div><h2>Thêm fact</h2><p class="section-help">Claim được code trích xuất đáp án và chuyển thành QA khi bạn nhấn Sinh cặp QA.</p>
+          <section class="panel kb-form-panel"><div class="section-kicker">ADD / FACT</div><h2>Thêm fact</h2><p class="section-help">Fact có thể là một đoạn dài. Model sẽ tách thông tin và tạo nhiều QA khi bạn nhấn Sinh cặp QA.</p>
             <form id="fact-form" class="kb-form">
               <label>Entity <select name="entityId" id="fact-entity" required></select></label>
               <label>Aspect <select name="aspect" id="fact-aspect" required><option value="origin">Nguồn gốc</option><option value="shape">Hình dạng</option><option value="meaning">Ý nghĩa</option><option value="ingredients">Nguyên liệu</option><option value="occasion">Dịp sử dụng</option><option value="region">Vùng miền</option><option value="other">Khác</option></select></label>
               <label id="custom-aspect-label" hidden>Tên aspect khác <input name="customAspect" id="custom-aspect" placeholder="Ví dụ: màu sắc"></label>
               <label>Nội dung fact / claim <textarea name="statement" required rows="3" placeholder="Ví dụ: Bánh tét có hình trụ."></textarea></label>
-              <label>Đáp án ngắn (tùy chọn) <input name="shortAnswer" placeholder="Chỉ nhập khi claim khó trích xuất tự động"></label>
               <label>Nguồn (tùy chọn) <input name="source" placeholder="Tên tài liệu hoặc URL"></label>
               <button class="primary-button" type="submit">Thêm fact <span aria-hidden="true">↗</span></button>
             </form>
@@ -117,6 +120,6 @@
       </section>
     </main>
   </div>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=20261011-4"></script>
 </body>
 </html>

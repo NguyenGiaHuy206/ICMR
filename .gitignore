@@ -1,4 +1,4 @@
-.openai/site-source.zip
+.openai/
 *.pdf
 *.docx
 .env
