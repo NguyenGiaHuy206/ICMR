@@ -1,9 +1,11 @@
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const workspaceRoot = dirname(root);
 let fileEnv = {};
 try {
   const text = await readFile(join(root, '.env'), 'utf8');
@@ -30,6 +32,31 @@ createServer(async (incoming, outgoing) => {
       chunks.push(chunk);
     }
     const url = new URL(incoming.url || '/', `http://localhost:${port}`);
+    if (url.pathname === '/api/knowledge-base' && incoming.method === 'GET') {
+      const directory = join(workspaceRoot, 'knowledge_base');
+      const files = [];
+      async function collectJsonFiles(folder) {
+        for (const entry of await readdir(folder, { withFileTypes: true })) {
+          if (entry.name.startsWith('_') || entry.name.startsWith('.')) continue;
+          const fullPath = join(folder, entry.name);
+          if (entry.isDirectory()) await collectJsonFiles(fullPath);
+          else if (entry.isFile() && entry.name.toLowerCase().endsWith('.json')) files.push(fullPath);
+        }
+      }
+      try {
+        await collectJsonFiles(directory);
+        files.sort((left, right) => left.localeCompare(right));
+        const entities = await Promise.all(files.map(async path => JSON.parse(await readFile(path, 'utf8'))));
+        const manifest = JSON.parse(await readFile(join(directory, '_manifest.json'), 'utf8'));
+        const version = createHash('sha256').update(JSON.stringify(manifest.files || {})).digest('hex');
+        outgoing.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        outgoing.end(JSON.stringify({ version, entities }));
+      } catch (error) {
+        outgoing.writeHead(500, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        outgoing.end(JSON.stringify({ error: `Cannot load project knowledge_base: ${error.message}` }));
+      }
+      return;
+    }
     const request = new Request(url, { method: incoming.method, headers: incoming.headers, body: chunks.length ? Buffer.concat(chunks) : undefined, duplex: 'half' });
     const response = await app.fetch(request, runtimeEnv);
     outgoing.writeHead(response.status, Object.fromEntries(response.headers));

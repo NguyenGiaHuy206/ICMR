@@ -21,46 +21,51 @@ function visibleQuestion(question, item) {
   output = output.replace(/\b(?:the )?(?:object|structure|building|temple|monument|dish|garment|place) (?:in|shown in) (?:the |this )?(?:image|photo|picture)\b/giu, subject);
   return output ? (/[?？]$/u.test(output) ? output : `${output}?`) : '';
 }
-function validRequest(body) {
-  return body && ['mcq', 'open'].includes(body.type) && Array.isArray(body.items) && body.items.length > 0 && body.items.length <= 12 && body.items.every(item =>
-    typeof item.fact_id === 'string' && item.fact_id.length <= 160 && typeof item.entity_name === 'string' && item.entity_name.length <= 300 &&
-    typeof item.statement === 'string' && item.statement.length > 0 && item.statement.length <= 40000 && Number(item.questions_per_fact) >= 1 && Number(item.questions_per_fact) <= 10);
+function containsGeographicHint(question) {
+  const value = ascii(question);
+  const geographicWords = /\b(?:country|countries|region|regional|province|provincial|state|city|village|district|island|peninsula|continent|north|south|east|west|central|southeast asia|asia|asian|africa|african|europe|european|america|american|diaspora)\b/i;
+  const placeNames = /\b(?:vietnam|vietnamese|malaysia|malaysian|indonesia|indonesian|thailand|thai|cambodia|cambodian|laos|lao|myanmar|burmese|philippines|filipino|singapore|singaporean|brunei|timor|china|chinese|india|indian|japan|japanese|korea|korean|united states|usa|britain|british|france|french|australia|australian)\b/i;
+  return geographicWords.test(value) || placeNames.test(value);
 }
-const schema = { type: 'object', additionalProperties: false, properties: { items: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { fact_id: { type: 'string' }, qa_pairs: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { question: { type: 'string' }, golden_answer: { type: 'string' }, answer_type: { type: 'string' }, distractors: { type: 'array', items: { type: 'string' } }, evidence_excerpt: { type: 'string' } }, required: ['question', 'golden_answer', 'answer_type', 'distractors', 'evidence_excerpt'] } } }, required: ['fact_id', 'qa_pairs'] } } }, required: ['items'] };
-function instructionsFor(type) {
-  const choiceRule = type === 'mcq' ? 'Every QA must contain exactly three distractors.' : 'This is open-ended QA, so distractors must always be an empty array.';
-  return `You create English QA data for evaluating image-grounded knowledge retrieval.
+function validRequest(body) {
+  return body && body.type === 'open' && Array.isArray(body.items) && body.items.length > 0 && body.items.length <= 12 && body.items.every(item =>
+    typeof item.task_id === 'string' && item.task_id.length <= 400 && ['easy', 'hard'].includes(item.difficulty) &&
+    typeof item.entity_name === 'string' && item.entity_name.length <= 300 && Array.isArray(item.claims) &&
+    item.claims.length >= (item.difficulty === 'hard' ? 2 : 1) && item.claims.length <= 8 &&
+    (item.difficulty === 'easy' || (Number.isInteger(item.required_claim_count) && item.required_claim_count >= 2 && item.required_claim_count <= item.claims.length)) &&
+    item.claims.every(claim => typeof claim.fact_id === 'string' && typeof claim.statement === 'string' && claim.statement.length > 0 && claim.statement.length <= 40000));
+}
+const schema = { type: 'object', additionalProperties: false, properties: { items: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { task_id: { type: 'string' }, qa_pairs: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { question: { type: 'string' }, golden_answer: { type: 'string' }, answer_type: { type: 'string' }, source_claim_ids: { type: 'array', items: { type: 'string' } }, evidence_excerpts: { type: 'array', items: { type: 'string' } } }, required: ['question', 'golden_answer', 'answer_type', 'source_claim_ids', 'evidence_excerpts'] } } }, required: ['task_id', 'qa_pairs'] } } }, required: ['items'] };
+function instructionsFor() {
+  return `You create English open-ended QA data for evaluating image-grounded knowledge retrieval.
 
-Each item contains entity_name, entity_category, fact_id, aspect, statement, and questions_per_fact. The statement may be a long passage containing many events, dates, people, and relations.
+Each item contains task_id, difficulty, entity information, and one or more claims from the same entity.
 
-For EACH fact, follow this order:
-1. Read entity_name and the entire statement. Split the passage into independently verifiable atomic claims.
-2. Select at most questions_per_fact distinct claims. Do not create duplicate questions.
-3. Write the question, golden_answer, distractors, and evidence_excerpt entirely in English, even when the KB text is in another language.
-4. The question must require the image to identify the entity and then require retrieval from the KB to answer. Never reveal entity_name, its local name, or another unique proper name that identifies it.
-5. Refer to the entity indirectly with short phrases such as “this temple”, “this monument”, “this dish”, “this garment”, “this object”, “this place”, or “the structure shown above”. Avoid the mechanical phrase “in the image”.
-6. Keep the question intentionally underspecified and concise. Ask for only one fact. Do not copy supporting clues, explanatory clauses, dates, names, locations, titles, or answer-bearing details from the statement into the question.
-7. Create a concise but complete golden_answer grounded only in statement. Do not use outside knowledge for the correct answer. evidence_excerpt must be a short passage from statement that verifies the answer.
-8. ${choiceRule} Create distractors only after question and golden_answer are fixed.
+For EACH item, return exactly one QA pair:
+1. Write question, golden_answer, source_claim_ids, and evidence_excerpts entirely in English.
+2. Never reveal entity_name, its local name, or another unique proper name that identifies it in the question.
+3. The question must require the image to identify the entity and then require retrieval from the KB.
+4. Refer indirectly with phrases such as "this temple", "this monument", "this dish", "this garment", "this object", or "this place". Avoid the mechanical phrase "in the image".
+5. Keep the question intentionally underspecified and concise. Do not copy answer-bearing clues from the claims into it.
+6. Ground the golden answer only in the supplied claims. Do not add outside knowledge or explanations.
+7. The QUESTION must not mention or hint at any country, nationality, demonym, region, province, city, compass region, continent, diaspora location, or phrases such as "country of origin" and "regional variation". If location is needed for the answer, ask indirectly, for example: "Where did this tradition originate?"
+8. Remove geographic qualifiers even when they appear in the source claim. Never name a country, nationality, demonym, region, province, city, village, island, or direction in the question. If the answer is a place, ask with neutral wording such as "What origin is associated with this structure?" Do not ask "which country/region" or include the answer's place as a clue. The image must be the only clue used to identify the entity and its cultural setting.
+
+DIFFICULTY RULES:
+- EASY: Each easy task includes easy_aspect, easy_variant, and candidate claims from that aspect only. Create exactly one question for the task, grounded in exactly one supplied claim from that aspect. Choose a useful, self-contained detail and make the question different from other variants for the same entity and aspect. Do not synthesize multiple claims. The golden answer must be a minimal span, normally 1-5 words: a name, date, number, material, or short noun phrase. source_claim_ids must contain exactly one ID.
+- HARD: First select exactly required_claim_count claims that have the strongest natural semantic relationship. Prefer claims that form one coherent relationship, process, comparison, cause, sequence, or description. Ignore unrelated candidate claims. Then write one question that can only be answered by combining all selected claims. source_claim_ids must contain exactly required_claim_count selected IDs.
+- A HARD question must ask for a relationship, comparison, sequence, combined description, or grounded inference. Do not merely join two unrelated questions with "and".
+- Keep the question focused even when required_claim_count is high. Do not turn it into a broad request for a comprehensive summary.
+- evidence_excerpts must contain one short supporting excerpt for every selected source claim.
+
+For multiple EASY tasks with the same entity and aspect, vary the question focus across the supplied claims/details and do not repeat a question. Use easy_variant as a hint to vary the focus, while remaining fully grounded in the claim selected for that answer.
 
 Question style examples:
-- Good: “During which period was this temple built?”
-- Good: “Under whose rule was this temple constructed?”
-- Good: “When was this monument rediscovered?”
-- Good: “What material is this object traditionally made from?”
-- Bad: “Which ninth-century temple completed by Samaratungga in 825 is shown?”
-- Bad: “In 1814, who was informed about a large monument near Bumisegoro?”
-- Bad: “What title did Guinness World Records give this structure in June 2012?”
-The bad questions leak retrieval clues. Rewrite them as “Who brought this monument to worldwide attention?” or “What world record has this temple held?”
+- EASY: "During which period was this temple built?" Answer: "Ninth century"
+- EASY: "Who popularized this monument internationally?" Answer: "Stamford Raffles"
+- HARD: "How did this monument's original construction and later restoration differ in technique?" The answer must combine evidence from construction and restoration claims.
 
-Distractor rules:
-- Base them on question, entity_name, golden_answer, and statement context.
-- Every option must directly answer the question with the same semantic type, specificity, and format as golden_answer.
-- Each option must be plausible for a similar entity but false for entity_name.
-- Never cross aspects. A year question gets years; a person question gets people; a material question gets materials; a place question gets places.
-- Do not repeat, paraphrase, partially contain, or imply golden_answer.
-
-Return only JSON matching the schema. Each item may contain at most questions_per_fact qa_pairs.`;
+Return only JSON matching the schema. Return exactly one qa_pairs entry per task_id.`;
 }
 async function callModel(provider, env, instructions, input) {
   if (provider === 'openai') {
@@ -123,85 +128,81 @@ function looksLikeQa(value) {
 }
 function normalizeModelItems(parsed, requestedItems) {
   if (Array.isArray(parsed)) {
-    if (parsed.some(looksLikeQa) && requestedItems.length === 1) return [{ fact_id: requestedItems[0].fact_id, qa_pairs: parsed }];
+    if (parsed.some(looksLikeQa) && requestedItems.length === 1) return [{ task_id: requestedItems[0].task_id, qa_pairs: parsed }];
     return parsed;
   }
   if (!parsed || typeof parsed !== 'object') return [];
-  for (const key of ['items', 'results', 'facts']) if (Array.isArray(parsed[key])) return normalizeModelItems(parsed[key], requestedItems);
-  for (const key of ['qa_pairs', 'questions', 'qas']) if (Array.isArray(parsed[key]) && requestedItems.length === 1) return [{ fact_id: parsed.fact_id || requestedItems[0].fact_id, qa_pairs: parsed[key] }];
+  for (const key of ['items', 'results', 'tasks']) if (Array.isArray(parsed[key])) return normalizeModelItems(parsed[key], requestedItems);
+  for (const key of ['qa_pairs', 'questions', 'qas']) if (Array.isArray(parsed[key]) && requestedItems.length === 1) return [{ task_id: parsed.task_id || requestedItems[0].task_id, qa_pairs: parsed[key] }];
   const keyed = Object.entries(parsed).filter(([, value]) => Array.isArray(value) || (value && typeof value === 'object'));
-  return keyed.map(([fact_id, value]) => Array.isArray(value) ? { fact_id, qa_pairs: value } : { fact_id: value.fact_id || fact_id, qa_pairs: value.qa_pairs || value.questions || value.qas }).filter(item => Array.isArray(item.qa_pairs));
+  return keyed.map(([task_id, value]) => Array.isArray(value) ? { task_id, qa_pairs: value } : { task_id: value.task_id || task_id, qa_pairs: value.qa_pairs || value.questions || value.qas }).filter(item => Array.isArray(item.qa_pairs));
 }
-function normalizePair(rawPair, source, type, index) {
-  if (!rawPair || typeof rawPair !== 'object') return { reason: `QA ${index + 1} không phải object.` };
+function normalizePair(rawPair, source, index) {
+  if (!rawPair || typeof rawPair !== 'object') return { reason: `QA ${index + 1} is not an object.` };
   const question = visibleQuestion(rawPair.question || rawPair.query || rawPair.prompt, source);
   const goldenAnswer = clean(rawPair.golden_answer || rawPair.goldenAnswer || rawPair.answer || rawPair.correct_answer || rawPair.correctAnswer);
-  let rawDistractors = rawPair.distractors || rawPair.incorrect_answers || rawPair.incorrectAnswers;
-  if (!Array.isArray(rawDistractors) && Array.isArray(rawPair.options || rawPair.choices)) {
-    rawDistractors = (rawPair.options || rawPair.choices).map(option => typeof option === 'object' ? (option.text || option.value || option.label) : option).filter(option => clean(option) !== goldenAnswer);
-  }
-  const distractors = type === 'mcq' ? [...new Set((Array.isArray(rawDistractors) ? rawDistractors : []).map(value => typeof value === 'object' ? (value.text || value.value || value.label) : value).map(clean).filter(value => value && value !== goldenAnswer))].slice(0, 3) : [];
-  if (!question) return { reason: `QA ${index + 1} thiếu question.` };
-  if (!goldenAnswer) return { reason: `QA ${index + 1} thiếu golden_answer.` };
-  if (type === 'mcq' && distractors.length !== 3) return { reason: `QA ${index + 1} chỉ có ${distractors.length}/3 distractor khác nhau.` };
-  return { value: { qa_id: `${source.fact_id}:qa:${index + 1}`, question, golden_answer: goldenAnswer, answer_type: clean(rawPair.answer_type || rawPair.answerType || rawPair.type || 'other'), distractors, evidence_excerpt: clean(rawPair.evidence_excerpt || rawPair.evidence || rawPair.supporting_text || rawPair.quote).slice(0, 1000) } };
+  const allowedIds = new Set(source.claims.map(claim => claim.fact_id));
+  const sourceIds = [...new Set((rawPair.source_claim_ids || rawPair.fact_ids || rawPair.claim_ids || []).map(clean).filter(id => allowedIds.has(id)))];
+  const excerpts = (rawPair.evidence_excerpts || [rawPair.evidence_excerpt || rawPair.evidence || rawPair.supporting_text || rawPair.quote]).map(clean).filter(Boolean).slice(0, sourceIds.length || 1);
+  if (!question) return { reason: `QA ${index + 1} is missing question.` };
+  if (containsGeographicHint(question)) return { reason: 'Question contains a geographic or nationality hint; rewrite it more ambiguously.' };
+  if (!goldenAnswer) return { reason: `QA ${index + 1} is missing golden_answer.` };
+  if (source.difficulty === 'easy' && sourceIds.length !== 1) return { reason: 'Easy QA must cite exactly one supplied claim.' };
+  if (source.difficulty === 'easy' && goldenAnswer.split(/\s+/).length > 8) return { reason: 'Easy golden_answer is longer than 8 words.' };
+  if (source.difficulty === 'hard' && sourceIds.length !== source.required_claim_count) return { reason: `Hard QA must select exactly ${source.required_claim_count} related claims; it selected ${sourceIds.length}.` };
+  if (excerpts.length < sourceIds.length) return { reason: 'Missing an evidence excerpt for one or more cited claims.' };
+  return { value: { qa_id: `${source.task_id}:qa:${index + 1}`, difficulty: source.difficulty, question, golden_answer: goldenAnswer, answer_type: clean(rawPair.answer_type || rawPair.answerType || rawPair.type || 'other'), source_claim_ids: sourceIds, evidence_excerpts: excerpts, evidence_excerpt: excerpts.join(' | ') } };
 }
 async function generateQa(request, env) {
   let body;
-  try { body = await request.json(); } catch { return json({ error: 'Dữ liệu gửi lên không hợp lệ.' }, 400); }
-  if (!validRequest(body)) return json({ error: 'Danh sách fact không hợp lệ, quá dài hoặc vượt giới hạn.' }, 400);
+  try { body = await request.json(); } catch { return json({ error: 'The request body is not valid JSON.' }, 400); }
+  if (!validRequest(body)) return json({ error: 'The open-ended task list is invalid or exceeds the limit.' }, 400);
   const provider = clean(env.LLM_PROVIDER || 'vilao').toLowerCase();
-  const items = body.items.map(item => ({ fact_id: item.fact_id, entity_name: item.entity_name, entity_local_name: item.entity_local_name || '', entity_category: item.entity_category || '', aspect: item.aspect || 'other', aspect_id: item.aspect_id || '', aspect_label: item.aspect_label || item.aspect || 'other', statement: item.statement, questions_per_fact: Math.max(1, Math.min(10, Number(item.questions_per_fact) || 1)) }));
-  const byId = new Map(items.map(item => [item.fact_id, item]));
-  const qa_pairs = Object.fromEntries(items.map(item => [item.fact_id, []]));
+  const items = body.items.map(item => ({
+    task_id: item.task_id, difficulty: item.difficulty, entity_name: item.entity_name,
+    entity_local_name: item.entity_local_name || '', entity_category: item.entity_category || '',
+    easy_variant: item.difficulty === 'easy' ? item.easy_variant || 1 : undefined,
+    easy_aspect: item.difficulty === 'easy' ? item.easy_aspect || '' : undefined,
+    required_claim_count: item.difficulty === 'hard' ? item.required_claim_count : 1,
+    claims: item.claims.map(claim => ({ fact_id: claim.fact_id, aspect: claim.aspect || 'other', aspect_id: claim.aspect_id || '', aspect_label: claim.aspect_label || claim.aspect || 'other', statement: claim.statement }))
+  }));
+  const qa_pairs = Object.fromEntries(items.map(item => [item.task_id, []]));
   const warnings = {};
   let model = '';
   let pending = items;
   let previousProblems = {};
+  let previousDrafts = {};
   for (let attempt = 1; attempt <= 3 && pending.length; attempt++) {
-    const repair = attempt === 1 ? '' : `
-
-REPAIR PASS ${attempt - 1}. The previous response was rejected for these exact reasons:
-${JSON.stringify(previousProblems)}
-Regenerate only the requested missing QA. Every MCQ must have exactly three non-empty, unique distractors that differ from the golden answer. Check the JSON yourself before returning it.`;
+    const repair = attempt === 1 ? '' : `\n\nREPAIR PASS ${attempt - 1}. Fix each validation error below. For geographic-hint errors, rewrite the question without any place, country, nationality, region, or directional wording. For claim-count errors, select exactly required_claim_count distinct IDs from that task's supplied claims and provide one matching evidence excerpt per selected claim. Do not repeat the previous invalid draft.\nValidation errors: ${JSON.stringify(previousProblems)}\nPrevious invalid drafts: ${JSON.stringify(previousDrafts)}\nRegenerate exactly one valid QA for each missing task.`;
     let output;
-    try { output = await callModel(provider, env, instructionsFor(body.type) + repair, { qa_type: body.type, items: pending }); }
-    catch (error) { return json({ error: error.message || 'Không kết nối được LLM.', retry_after_seconds: error.retryAfter || 0 }, error.status || 502); }
+    try { output = await callModel(provider, env, instructionsFor() + repair, { qa_type: 'open', items: pending }); }
+    catch (error) { return json({ error: error.message || 'Could not connect to the LLM.', retry_after_seconds: error.retryAfter || 0 }, error.status || 502); }
     model = output.model;
     let parsed;
     try { parsed = parseModelJson(output.text); }
-    catch {
-      previousProblems = Object.fromEntries(pending.map(item => [item.fact_id, ['Phản hồi không phải JSON hợp lệ.']]));
-      continue;
-    }
+    catch { previousProblems = Object.fromEntries(pending.map(item => [item.task_id, ['Response is not valid JSON.']])); continue; }
     const results = normalizeModelItems(parsed, pending);
-    const resultById = new Map(results.map(result => [clean(result.fact_id), result]));
+    const resultById = new Map(results.map(result => [clean(result.task_id), result]));
     previousProblems = {};
+    previousDrafts = {};
     const nextPending = [];
     for (const requested of pending) {
-      const result = resultById.get(requested.fact_id);
-      const accepted = [];
+      const result = resultById.get(requested.task_id);
       const rejected = [];
-      if (!result || !Array.isArray(result.qa_pairs)) rejected.push('Không tìm thấy qa_pairs khớp fact_id.');
+      if (!result || !Array.isArray(result.qa_pairs)) rejected.push('No qa_pairs matched task_id.');
       else for (const [index, rawPair] of result.qa_pairs.entries()) {
-        const pair = normalizePair(rawPair, requested, body.type, qa_pairs[requested.fact_id].length + index);
-        if (pair.value) accepted.push(pair.value);
-        else rejected.push(pair.reason);
+        const pair = normalizePair(rawPair, requested, index);
+        if (pair.value && !qa_pairs[requested.task_id].length) qa_pairs[requested.task_id].push(pair.value);
+        else if (pair.reason) { rejected.push(pair.reason); previousDrafts[requested.task_id] = rawPair; }
       }
-      for (const pair of accepted) {
-        const signature = ascii(pair.question) + '|' + ascii(pair.golden_answer);
-        if (!qa_pairs[requested.fact_id].some(existing => ascii(existing.question) + '|' + ascii(existing.golden_answer) === signature)) qa_pairs[requested.fact_id].push(pair);
-      }
-      qa_pairs[requested.fact_id] = qa_pairs[requested.fact_id].slice(0, requested.questions_per_fact);
-      const missing = requested.questions_per_fact - qa_pairs[requested.fact_id].length;
-      if (missing > 0) {
-        previousProblems[requested.fact_id] = [...rejected, `Còn thiếu ${missing} QA hợp lệ.`];
-        nextPending.push({ ...requested, questions_per_fact: missing });
+      if (!qa_pairs[requested.task_id].length) {
+        previousProblems[requested.task_id] = rejected.length ? rejected : ['No valid QA returned.'];
+        nextPending.push(requested);
       }
     }
     pending = nextPending;
   }
-  for (const item of pending) warnings[item.fact_id] = previousProblems[item.fact_id] || ['Model không hoàn tất QA sau các lượt tự sửa.'];
+  for (const item of pending) warnings[item.task_id] = previousProblems[item.task_id] || ['Model did not complete this task.'];
   return json({ qa_pairs, warnings, model, provider });
 }
 async function llmStatus(env) {

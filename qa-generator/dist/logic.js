@@ -31,7 +31,7 @@ function fitsAnswerType(answerType, aspect, value) {
   if (answerType === 'place') return /\b(viet nam|trung quoc|lao|campuchia|hue|ha noi|sai gon|bac|trung|nam|mien|vung|tinh|thanh pho)\b/.test(normalized);
   return fitsAspect(aspect, value);
 }
-const goodStatuses = new Set(['mock', 'approved', 'adjudicated', 'accepted', 'verified', 'machine_accepted']);
+const goodStatuses = new Set(['approved', 'adjudicated', 'accepted', 'verified', 'machine_accepted']);
 const categoryKey = entity => compareKey(entity.category);
 const sharesCategory = (left, right) => categoryKey(left) && categoryKey(left) === categoryKey(right);
 
@@ -125,7 +125,7 @@ export function addFact(entities, fields) {
   let index = entity.facts.length + 1;
   let id = `${entity.id}-custom-${index}`;
   while (entity.facts.some(fact => fact.id === id)) id = `${entity.id}-custom-${++index}`;
-  const fact = normalizeFact({ id, aspect, statement, short_answer: fields.shortAnswer, source: fields.source, status: 'mock' }, entity.name, entity.id, entity.facts.length);
+  const fact = normalizeFact({ id, aspect, statement, short_answer: fields.shortAnswer, source: fields.source, status: 'pending' }, entity.name, entity.id, entity.facts.length);
   return entities.map(item => item.id === entity.id ? { ...item, facts: [...item.facts, fact] } : item);
 }
 
@@ -215,56 +215,84 @@ function localFallbackDistractors(fact, answerType, used, count) {
   return pool.filter(value => !used.some(item => sameOrContained(value, item))).slice(0, count);
 }
 
-export function generateQuestions({ entities, type, selectedIds, perEntity = 3, perFact = 3, seed = 2027, includeUnreviewed = false, llmQaPairs = {}, llmErrors = {} }) {
-  if (!['mcq', 'open'].includes(type)) throw new Error('Loại câu hỏi không hợp lệ.');
-  const rng = random(seed);
+export function generateQuestions({ entities, selectedIds, easyPerAspect, easyPerEntity, hardPerEntity = 1, claimsPerHard = 3, seed = 2027, includeUnreviewed = false, llmQaPairs = {}, llmErrors = {} }) {
   const selected = new Set(selectedIds);
-  const factCount = Math.max(1, Math.min(20, Number(perEntity) || 1));
-  const questionCount = Math.max(1, Math.min(10, Number(perFact) || 1));
-  const usable = fact => goodStatuses.has(fact.status) || (includeUnreviewed && ['pending', 'in_progress', 'not_reviewed'].includes(fact.status));
+  // Easy generation is scoped to each aspect. Keep easyPerEntity as a
+  // backwards-compatible alias for saved settings and existing scripts.
+  const easyCount = Math.max(0, Math.min(10, Number(easyPerAspect ?? easyPerEntity ?? 2) || 0));
+  const hardCount = Math.max(0, Math.min(5, Number(hardPerEntity) || 0));
+  const hardClaimCount = Math.max(2, Math.min(6, Number(claimsPerHard) || 3));
+  const usable = fact => goodStatuses.has(fact.status) || ['needs_review', 'conflicting'].includes(fact.status) || (includeUnreviewed && ['pending', 'in_progress', 'not_reviewed'].includes(fact.status));
   const questions = [];
   const skipped = [];
-  const needsLlm = [];
   const llmItems = [];
   for (const entity of entities.filter(item => selected.has(item.id))) {
     const available = entity.facts.filter(usable);
-    const facts = shuffle(available, random(stableSeed(seed, 'facts', entity.id))).slice(0, factCount);
-    if (!facts.length) skipped.push(`${entity.name}: chưa có fact được duyệt hoặc dữ liệu mẫu.`);
-    for (const fact of facts) {
-      llmItems.push({
-        fact_id: fact.id, entity_name: entity.name, entity_category: entity.category, entity_local_name: entity.localName,
-        aspect: fact.aspect, aspect_id: fact.aspect_id, aspect_label: fact.aspect_label, statement: fact.statement, questions_per_fact: questionCount
+    if (!available.length) { skipped.push(`${entity.name}: không có claim để sinh QA.`); continue; }
+    const aspectGroups = new Map();
+    for (const fact of available) {
+      const aspectKey = clean(fact.aspect_id || fact.aspect || fact.aspect_label || 'other').toLocaleLowerCase();
+      if (!aspectGroups.has(aspectKey)) aspectGroups.set(aspectKey, []);
+      aspectGroups.get(aspectKey).push(fact);
+    }
+    const tasks = [];
+    for (const [aspectKey, aspectFacts] of aspectGroups) {
+      const aspectToken = stableSeed(1, entity.id, aspectKey).toString(36);
+      const candidates = shuffle(aspectFacts, random(stableSeed(seed, 'easy', entity.id, aspectKey))).slice(0, 8);
+      for (let variant = 1; variant <= easyCount; variant++) tasks.push({
+        task_id: `easy:${entity.id}:${aspectToken}:${variant}`, difficulty: 'easy', entity_name: entity.name,
+        entity_category: entity.category, entity_local_name: entity.localName,
+        easy_variant: variant, easy_aspect: candidates[0]?.aspect_label || candidates[0]?.aspect || aspectKey,
+        claims: candidates.map(fact => ({ fact_id: fact.id, aspect: fact.aspect, aspect_id: fact.aspect_id, aspect_label: fact.aspect_label, statement: fact.statement }))
       });
-      const pairs = Array.isArray(llmQaPairs[fact.id]) ? llmQaPairs[fact.id].slice(0, questionCount) : [];
-      if (!pairs.length && (Object.keys(llmQaPairs).length || Object.keys(llmErrors).length)) skipped.push(`${entity.name} · ${fact.aspect_label}: ${llmErrors[fact.id] || 'model chưa tạo được QA hợp lệ.'}`);
+    }
+    if (hardCount && available.length < 2) skipped.push(`${entity.name}: không tạo câu hard vì chỉ có ${available.length} claim dùng được; các câu easy vẫn được xử lý.`);
+    const hardPool = shuffle(available, random(stableSeed(seed, 'hard', entity.id)));
+    for (let index = 0; index < hardCount && hardPool.length >= 2; index++) {
+      const requiredClaimCount = Math.min(hardClaimCount, hardPool.length);
+      const candidateCount = Math.min(hardPool.length, Math.max(requiredClaimCount, 8));
+      const claims = [];
+      for (let offset = 0; offset < candidateCount; offset++) claims.push(hardPool[(index + offset) % hardPool.length]);
+      tasks.push({
+        task_id: `hard:${entity.id}:${index + 1}`, difficulty: 'hard', entity_name: entity.name,
+        entity_category: entity.category, entity_local_name: entity.localName,
+        required_claim_count: requiredClaimCount,
+        claims: claims.map(fact => ({ fact_id: fact.id, aspect: fact.aspect, aspect_id: fact.aspect_id, aspect_label: fact.aspect_label, statement: fact.statement }))
+      });
+    }
+    for (const task of tasks) {
+      llmItems.push(task);
+      const pairs = Array.isArray(llmQaPairs[task.task_id]) ? llmQaPairs[task.task_id].slice(0, 1) : [];
+      if (!pairs.length && (Object.keys(llmQaPairs).length || Object.keys(llmErrors).length)) skipped.push(`${entity.name} · ${task.difficulty}: ${llmErrors[task.task_id] || 'model chưa tạo được QA hợp lệ.'}`);
       pairs.forEach((pair, index) => {
         const answer = clean(pair.golden_answer);
         const question = clean(pair.question);
         if (!answer || !question) return;
-        const base = {
-          id: `${type}-${fact.id}-${index + 1}`, qa_id: clean(pair.qa_id) || `${fact.id}:qa:${index + 1}`,
-          gold_answer_id: `${fact.id}:gold:${index + 1}`, type, entity_id: entity.id, entity_name: entity.name,
-          fact_id: fact.id, evidence_fact_id: fact.id, aspect: fact.aspect, aspect_id: fact.aspect_id, aspect_label: fact.aspect_label,
-          question, answer, answer_type: clean(pair.answer_type || 'other'), evidence: clean(pair.evidence_excerpt),
-          source: fact.source, source_refs: fact.source_refs, kb_status: fact.status, review_status: 'draft',
+        const sourceIds = [...new Set((pair.source_claim_ids || task.claims.map(claim => claim.fact_id)).map(clean).filter(Boolean))];
+        const sourceFacts = sourceIds.map(id => entity.facts.find(fact => fact.id === id)).filter(Boolean);
+        questions.push({
+          id: `open-${task.task_id}-${index + 1}`, qa_id: clean(pair.qa_id) || `${task.task_id}:qa:${index + 1}`,
+          gold_answer_id: `${task.task_id}:gold:${index + 1}`, type: 'open', difficulty: task.difficulty,
+          entity_id: entity.id, entity_name: entity.name, task_id: task.task_id,
+          required_claim_count: task.required_claim_count || 1,
+          fact_id: sourceIds[0] || task.claims[0].fact_id, fact_ids: sourceIds, evidence_fact_ids: sourceIds,
+          aspect: task.difficulty === 'easy' ? task.claims[0].aspect : 'multi_claim',
+          aspect_label: task.difficulty === 'easy' ? task.claims[0].aspect_label : 'Multi-claim synthesis',
+          question, answer, answer_type: clean(pair.answer_type || 'other'),
+          evidence: clean(pair.evidence_excerpt || (pair.evidence_excerpts || []).join(' | ')),
+          source: sourceFacts.map(fact => fact.source).filter(Boolean).join('; '), source_refs: sourceFacts.flatMap(fact => fact.source_refs || []),
+          kb_status: sourceFacts.every(fact => goodStatuses.has(fact.status)) ? 'verified' : 'unreviewed', review_status: 'draft',
           answer_origin: 'llm_grounded', confidence: 'review_required', requires_image: true
-        };
-        if (type === 'open') { questions.push(base); return; }
-        const distractors = [...new Map((pair.distractors || []).map(cleanCandidate).filter(Boolean)
-          .filter(value => !sameOrContained(value, answer)).map(value => [compareKey(value), value])).values()].slice(0, 3);
-        if (distractors.length !== 3) { skipped.push(`${entity.name} · ${fact.aspect_label} · QA ${index + 1}: model không trả đủ 3 phương án nhiễu.`); return; }
-        const mixed = shuffle([{ value: answer, source: 'correct' }, ...distractors.map(value => ({ value, source: 'llm' }))], random(stableSeed(seed, 'options', entity.id, fact.id, index)));
-        questions.push({ ...base, options: mixed.map(option => option.value), option_sources: mixed.map(option => option.source), correct_index: mixed.findIndex(option => option.source === 'correct') });
+        });
       });
     }
   }
-  return { questions, skipped, needsLlm, llmItems };
+  return { questions, skipped, llmItems };
 }
 
 export function toCsv(questions) {
-  const header = ['type', 'qa_id', 'gold_answer_id', 'entity_id', 'entity_name', 'fact_id', 'aspect', 'question', 'answer', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_letter', 'evidence_excerpt', 'source', 'kb_status', 'answer_origin', 'confidence', 'review_status', 'requires_image', 'option_a_source', 'option_b_source', 'option_c_source', 'option_d_source'];
+  const header = ['type', 'difficulty', 'qa_id', 'gold_answer_id', 'entity_id', 'entity_name', 'task_id', 'required_claim_count', 'fact_ids', 'aspect', 'question', 'answer', 'evidence_excerpt', 'source', 'kb_status', 'answer_origin', 'confidence', 'review_status', 'requires_image'];
   const quote = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
-  const rows = questions.map(q => [q.type, q.qa_id, q.gold_answer_id, q.entity_id, q.entity_name, q.fact_id, q.aspect, q.question, q.answer,
-    ...(q.options || ['', '', '', '']), q.options ? 'ABCD'[q.correct_index] : '', q.evidence, q.source, q.kb_status, q.answer_origin, q.confidence, q.review_status, q.requires_image, ...(q.option_sources || ['', '', '', ''])]);
+  const rows = questions.map(q => [q.type, q.difficulty, q.qa_id, q.gold_answer_id, q.entity_id, q.entity_name, q.task_id, q.required_claim_count, (q.fact_ids || []).join(';'), q.aspect, q.question, q.answer, q.evidence, q.source, q.kb_status, q.answer_origin, q.confidence, q.review_status, q.requires_image]);
   return '\uFEFF' + [header, ...rows].map(row => row.map(quote).join(',')).join('\r\n');
 }

@@ -1,18 +1,15 @@
-﻿# ICMR QA Studio
+# ICMR Open-ended QA Studio
 
-Web tool tạo câu hỏi trắc nghiệm và câu hỏi mở bằng tiếng Anh từ knowledge base. Một fact có thể là đoạn dài và có thể sinh nhiều QA. Model tự tách các mệnh đề, viết câu hỏi mơ hồ không nêu tên entity, tạo golden answer bám sát fact, rồi tạo ba phương án nhiễu cùng kiểu ngữ nghĩa.
+Web tool tao cau hoi open-ended bang tieng Anh tu du lieu that trong thu muc `D:\ICMR\knowledge_base`. Khong co entity hay claim mau trong ung dung. Tool chia cau hoi thanh hai muc:
 
-## Cấu hình Vilao
+- **Easy**: tao theo tung aspect; mac dinh moi aspect sinh 2 cau, moi cau chi can mot claim va co cau tra loi ngan gon. Co the doi so cau trong muc cai dat.
+- **Hard**: phai ket hop it nhat hai claim cua cung mot entity de tao mot cau tra loi day du.
 
-Tạo file `.env` từ `.env.example`:
+Cau hoi khong neu ten entity, quoc gia, dan toc, vung, tinh hay thanh pho. No dung cac cach goi nhu `this temple`, `this dish` hoac `this object` de buoc he thong nhan dien doi tuong tu anh truoc khi retrieval.
 
-```powershell
-cd D:\ICMR\qa-generator
-Copy-Item .env.example .env
-notepad .env
-```
+## Cau hinh Vilao
 
-Điền khóa API vào file `.env`:
+Tao `.env` tu `.env.example` va dien API key:
 
 ```env
 LLM_PROVIDER=vilao
@@ -22,70 +19,63 @@ VILAO_MODEL=chib/gemini-3.8-flash
 PORT=4173
 ```
 
-Khóa chỉ được đọc ở server local và không được gửi xuống trình duyệt. Nếu tên model trên tài khoản Vilao khác với slug trang model, sửa `VILAO_MODEL` theo model ID Vilao cung cấp.
+API key chi duoc doc tai server local va khong duoc gui xuong trinh duyet.
 
-Chạy ứng dụng:
+Chay ung dung:
 
 ```powershell
-npm test
-npm run serve
+cd D:\ICMR\qa-generator
+npm.cmd test
+npm.cmd run serve
 ```
 
-Mở `http://127.0.0.1:4173`. Để chia sẻ bản local, mở cửa sổ PowerShell khác và chạy:
+Mo `http://127.0.0.1:4173`. De chia se ban local, mo PowerShell khac va chay:
 
 ```powershell
 ngrok http 127.0.0.1:4173
 ```
 
-## Dữ liệu đầu vào
+## Du lieu dau vao
 
-Ứng dụng nhận trực tiếp schema của thư mục `knowledge_base`: mỗi file JSON chứa một entity và mảng `aspects`. Có thể chọn nhiều file hoặc dùng nút **Nhập thư mục KB**. `_manifest.json` được bỏ qua.
+Khi chay local, server doc truc tiep cac file JSON trong thu muc `D:\ICMR\knowledge_base` (bo qua `_manifest.json`) va nap vao giao dien. Moi file JSON chua mot entity va mang `aspects`. Cac truong `entity_id`, aspect `id` va `claim_id` duoc giu nguyen de retrieval va truy vet.
 
 ```json
 {
   "category": "Architecture & Heritage",
-  "country": "Indonesia",
   "entity_name": "Borobudur",
   "entity_id": "entity_...",
-  "schema_version": "1.0",
-  "synthetic": false,
   "aspects": [
     {
       "id": "aspect-...",
       "aspect_name": "Historical significance",
       "claim": "A long accepted paragraph...",
       "claim_id": "claim-...",
-      "verification": {
-        "status": "machine_accepted",
-        "provider": "Gemini",
-        "model": "gemini-3.8-flash"
-      }
+      "verification": { "status": "machine_accepted" }
     }
   ]
 }
 ```
 
-`entity_id`, aspect `id` và `claim_id` được giữ nguyên trong dữ liệu QA để retrieval và truy vết. Công cụ vẫn tương thích với schema cũ `entities[].facts[]` và JSONL.
+Neu deploy ngoai may local hoac muon chon bo du lieu khac, co the nhap schema cu `entities[].facts[]`, JSON hoac JSONL trong tab Knowledge base. Tab Knowledge base cho phep them entity, gan category, them, sua va xoa fact.
 
-## Luồng sinh QA
+## Luong sinh QA
 
-1. Giao diện gửi riêng từng fact cùng `entity_name`, `category`, `aspect` và số câu tối đa cần tạo.
-2. Model tách fact thành các mệnh đề nguyên tử khác nhau.
-3. Với mỗi mệnh đề, model tạo `question`, `golden_answer`, `answer_type` và một `evidence_excerpt` ngắn bằng tiếng Anh. Câu hỏi dùng tham chiếu như “this temple” hoặc “this object” để buộc hệ thống nhận diện ảnh trước khi retrieval; golden answer chỉ được dựa trên fact.
-4. Với trắc nghiệm, model dùng chính entity, câu hỏi và golden answer vừa tạo để sinh đúng ba nhiễu cùng kiểu ngữ nghĩa. Ví dụ câu hỏi năm chỉ nhận các năm; câu hỏi vật liệu chỉ nhận vật liệu.
-5. Mỗi QA lưu `fact_id`, `evidence_fact_id` và `gold_answer_id`. Đoạn fact dài chỉ nằm trong KB; QA không sao chép toàn bộ đoạn đó.
-6. Kết quả cần được người biên tập duyệt trước khi dùng làm benchmark.
+1. Tool chon claim theo tung entity bang seed co dinh.
+2. Moi tac vu Easy gui mot claim cho model.
+3. Moi tac vu Hard gui tu 2 den 6 claim cua cung entity.
+4. Model viet cau hoi mo ho bang tieng Anh, tao golden answer va tra ve ID cua tat ca claim da dung.
+5. Backend kiem tra Easy chi tham chieu mot claim; Hard phai tham chieu it nhat hai claim.
+6. Neu output khong dung schema, backend tu dong yeu cau model sua lai toi da ba lan.
+7. Ket qua luu `difficulty`, `task_id`, `fact_ids`, `gold_answer_id` va evidence de truy vet.
 
-Hai tham số trên giao diện:
+## Tham so giao dien
 
-- **Số fact tối đa / entity**: số fact được gửi tới model.
-- **Số câu tối đa / fact**: số mệnh đề tối đa model khai thác từ mỗi fact.
+- **So cau de / entity**: so tac vu Easy, moi cau dung mot claim.
+- **So cau kho / entity**: so tac vu Hard can tao.
+- **So claim / cau kho**: so claim cap cho model trong moi tac vu Hard, tu 2 den 6.
+- **Seed**: giu viec chon claim on dinh giua lan gui model va lan lap ket qua.
 
-Tab Knowledge base cho phép thêm entity, gán category, thêm, sửa và xóa fact. Dữ liệu chỉnh sửa được lưu trong `localStorage` của trình duyệt.
-
-## Provider dự phòng
-
-Ollama vẫn được hỗ trợ bằng cách đổi `.env`:
+## Provider du phong
 
 ```env
 LLM_PROVIDER=ollama

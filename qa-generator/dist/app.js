@@ -1,4 +1,4 @@
-import { mockEntities, aspectLabels } from './data.js';
+import { aspectLabels } from './data.js';
 import { addEntity, addFact, updateFact, removeFact, generateQuestions, normalizeKnowledgeBase, toCsv } from './logic.js';
 
 const $ = selector => document.querySelector(selector);
@@ -8,17 +8,34 @@ const make = (tag, className = '', content = '') => {
   if (content !== '') node.textContent = content;
   return node;
 };
-const mock = normalizeKnowledgeBase(mockEntities);
-let entities = mock;
-let mode = 'mock';
+let entities = [];
+let mode = 'empty';
+const KB_STORAGE_KEY = 'icmr-qa-kb-v1';
+const KB_SOURCE_KEY = 'icmr-qa-kb-source';
+const KB_VERSION_KEY = 'icmr-qa-kb-project-version';
 try {
-  const saved = localStorage.getItem('icmr-qa-kb-v1');
-  if (saved) { entities = normalizeKnowledgeBase(JSON.parse(saved)); mode = 'imported'; }
-} catch { localStorage.removeItem('icmr-qa-kb-v1'); }
+  const saved = localStorage.getItem(KB_STORAGE_KEY);
+  const savedSource = localStorage.getItem(KB_SOURCE_KEY);
+  if (saved) {
+    // Older builds stored the project KB as if it were a user import. Discard
+    // that unmarked cache so the current project KB is fetched from disk.
+    if (savedSource === 'imported' || savedSource === 'project') {
+      const savedEntities = normalizeKnowledgeBase(JSON.parse(saved))
+        .map(entity => ({ ...entity, facts: entity.facts.filter(fact => fact.status !== 'mock') }))
+        .filter(entity => entity.facts.length);
+      if (savedEntities.length) { entities = savedEntities; mode = savedSource; }
+      else localStorage.removeItem(KB_STORAGE_KEY);
+    } else {
+      localStorage.removeItem(KB_STORAGE_KEY);
+      localStorage.removeItem(KB_VERSION_KEY);
+    }
+  }
+} catch { localStorage.removeItem(KB_STORAGE_KEY); localStorage.removeItem(KB_SOURCE_KEY); localStorage.removeItem(KB_VERSION_KEY); }
 let selectedIds = new Set(entities.map(entity => entity.id));
-let view = 'mcq';
-let generated = { mcq: [], open: [] };
-let skipped = { mcq: [], open: [] };
+let view = 'open';
+let generated = { open: [] };
+let skipped = { open: [] };
+let retryState = null;
 
 function notify(message, error = false) {
   const box = $('#notice');
@@ -34,19 +51,14 @@ function setView(next) {
   document.querySelectorAll('.nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === next));
   $('#generator-view').hidden = next === 'kb';
   $('#kb-view').hidden = next !== 'kb';
-  const titles = { mcq: 'Câu hỏi trắc nghiệm', open: 'Câu hỏi mở', kb: 'Knowledge base' };
-  $('#breadcrumb').textContent = titles[next];
-  const title = $('#page-title');
-  title.replaceChildren();
-  if (next === 'mcq') { title.append('Sinh câu hỏi '); title.append(make('em', '', 'trắc nghiệm')); }
-  if (next === 'open') { title.append('Sinh câu hỏi '); title.append(make('em', '', 'mở')); }
-  if (next === 'kb') { title.append('Quản lý '); title.append(make('em', '', 'knowledge base')); }
-  $('#page-description').textContent = next === 'mcq'
-    ? 'Tạo câu hỏi dựa trên ảnh mà không nêu tên entity. Nhiễu KB chỉ dùng fact cùng danh mục và đúng khía cạnh câu hỏi; Qwen tạo phần còn thiếu.'
-    : next === 'open'
-      ? 'Tạo câu hỏi tự luận ngắn về đối tượng trong ảnh, kèm đáp án chuẩn và căn cứ từ knowledge base.'
-      : 'Xem từng entity và fact, nhập dữ liệu thật khi knowledge base sẵn sàng.';
-  $('#results-title').textContent = next === 'open' ? 'Bộ câu hỏi mở' : 'Bộ câu hỏi trắc nghiệm';
+  $('#breadcrumb').textContent = next === 'open' ? 'Open-ended QA' : 'Knowledge base';
+  const title = $('#page-title'); title.replaceChildren();
+  if (next === 'open') { title.append('Open-ended '); title.append(make('em', '', 'QA generator')); }
+  if (next === 'kb') { title.append('Knowledge base '); title.append(make('em', '', 'manager')); }
+  $('#page-description').textContent = next === 'open'
+    ? 'Easy questions are generated per aspect, using one claim each. Hard questions synthesize multiple claims from the same entity.'
+    : 'Browse entities and edit their source claims.';
+  $('#results-title').textContent = 'Open-ended question set';
   renderResults();
 }
 
@@ -79,8 +91,17 @@ function renderResults() {
   const skipBox = $('#skipped'); skipBox.replaceChildren();
   skipBox.hidden = skipped[view].length === 0;
   if (skipped[view].length) {
-    skipBox.append(make('strong', '', `${skipped[view].length} fact được bỏ qua`));
+    const affectedEntities = entities.filter(entity => skipped[view].some(reason => reason.startsWith(`${entity.name}:`) || reason.startsWith(`${entity.name} ·`))).length;
+    skipBox.append(make('strong', '', `${skipped[view].length} mục chưa tạo · ${affectedEntities} entity có ít nhất một mục bị bỏ qua`));
+    skipBox.append(make('p', 'section-help', 'Đây không phải số entity bị bỏ qua hoàn toàn. Nếu thiếu claim cho câu hard, các câu easy của entity đó vẫn được xử lý.'));
     const list = make('ul'); skipped[view].forEach(reason => list.append(make('li', '', reason))); skipBox.append(list);
+    if (view === 'open' && retryState?.pending.length) {
+      const retry = make('button', 'secondary-button retry-skipped', `Thử lại ${retryState.pending.length} QA lỗi từ LLM`);
+      retry.type = 'button'; retry.disabled = retryState.running;
+      retry.addEventListener('click', retryFailedQa);
+      skipBox.append(retry);
+      skipBox.append(make('p', 'section-help', 'Các mục thiếu claim để tạo câu hard không nằm trong hàng đợi thử lại.'));
+    }
   }
   const results = $('#results'); results.replaceChildren();
   items.forEach((item, index) => results.append(questionCard(item, index)));
@@ -89,29 +110,19 @@ function renderResults() {
 function questionCard(item, index) {
   const card = make('article', 'question-card');
   const top = make('div', 'card-top');
-  top.append(make('div', 'card-id', `QA ${String(index + 1).padStart(2, '0')} / ${item.fact_id}`));
+  const claimCount = (item.fact_ids || [item.fact_id]).filter(Boolean).length;
+  top.append(make('div', 'card-id', `QA ${String(index + 1).padStart(2, '0')} | ${claimCount} claim${claimCount === 1 ? '' : 's'}`));
   const tags = make('div', 'card-tags');
   tags.append(make('span', 'tag', item.aspect_label || aspectLabels[item.aspect] || item.aspect));
+  tags.append(make('span', `tag ${item.difficulty === 'hard' ? 'mock' : 'approved'}`, item.difficulty === 'hard' ? 'Hard' : 'Easy'));
   const validated = ['approved', 'adjudicated', 'accepted', 'verified'].includes(item.kb_status);
-  tags.append(make('span', `tag ${item.kb_status === 'mock' || !validated ? 'mock' : 'approved'}`, item.kb_status === 'mock' ? 'Dữ liệu mẫu' : validated ? 'Đã duyệt' : 'Chưa duyệt'));
-  if (item.answer_origin === 'rule') tags.append(make('span', 'tag approved', 'Code trích xuất'));
-  if (item.raw_answer) tags.append(make('span', 'tag mock', 'Cần rút gọn đáp án'));
-  if (item.option_sources?.includes('llm')) tags.append(make('span', 'tag mock', `${item.option_sources.filter(source => source === 'kb').length} nhiễu KB · ${item.option_sources.filter(source => source === 'llm').length} nhiễu LLM`));
-  if (item.option_sources?.includes('fallback')) tags.append(make('span', 'tag mock', `${item.option_sources.filter(source => source === 'fallback').length} nhiễu dự phòng`));
+  tags.append(make('span', `tag ${validated ? 'approved' : 'mock'}`, validated ? 'Đã duyệt' : 'Chưa duyệt'));
   top.append(tags); card.append(top);
   card.append(make('p', 'card-question', item.question));
-  if (item.type === 'mcq') {
-    const options = make('div', 'option-list');
-    item.options.forEach((value, optionIndex) => {
-      const option = make('div', `option${optionIndex === item.correct_index ? ' correct' : ''}`);
-      option.append(make('span', 'option-letter', 'ABCD'[optionIndex]), make('span', '', value)); options.append(option);
-    }); card.append(options);
-  } else {
-    const answer = make('div', 'answer-box');
-    answer.append(make('strong', '', 'ĐÁP ÁN CHUẨN'), make('span', '', item.answer)); card.append(answer);
-  }
+  const answer = make('div', 'answer-box');
+  answer.append(make('strong', '', 'GOLDEN ANSWER'), make('span', '', item.answer)); card.append(answer);
   const evidence = make('div', 'evidence');
-  evidence.append(make('strong', '', `Căn cứ KB · ${item.evidence_fact_id || item.fact_id} · `), document.createTextNode(item.evidence || 'Xem fact gốc trong knowledge base.')); card.append(evidence);
+  evidence.append(make('strong', '', `KB evidence | ${claimCount} claim${claimCount === 1 ? '' : 's'} | `), document.createTextNode(item.evidence || 'See the source claims in the knowledge base.')); card.append(evidence);
   const footer = make('div', 'card-footer');
   const sourceBox = make('span', 'card-source');
   const firstSource = item.source_refs?.find(source => /^https?:\/\//i.test(source.url));
@@ -143,7 +154,6 @@ function toggleEdit(card, item) {
   const answer = make('input'); answer.value = item.answer;
   answer.addEventListener('change', () => {
     const value = answer.value.trim(); if (!value) return;
-    if (item.type === 'mcq') item.options[item.correct_index] = value;
     item.answer = value; renderResults();
   });
   answerLabel.append(answer); grid.append(answerLabel);
@@ -162,9 +172,9 @@ function renderKb() {
   factEntity.replaceChildren();
   entities.forEach(entity => { const option = make('option', '', entity.name); option.value = entity.id; factEntity.append(option); });
   if (entities.some(entity => entity.id === previousEntity)) factEntity.value = previousEntity;
-  $('#kb-mode-title').textContent = mode === 'mock' ? 'Dữ liệu mẫu' : 'Dữ liệu đã nhập';
+  $('#kb-mode-title').textContent = mode === 'project' ? 'Knowledge base trong dự án' : mode === 'empty' ? 'Chưa có dữ liệu' : 'Knowledge base đã nhập';
   const facts = entities.flatMap(entity => entity.facts);
-    const stats = [['Entity', entities.length], ['Aspect claim', facts.length], ['Sẵn sàng', facts.filter(f => ['mock', 'approved', 'adjudicated', 'accepted', 'verified', 'machine_accepted'].includes(f.status)).length], ['Chưa gán danh mục', entities.filter(entity => !entity.category).length]];
+    const stats = [['Entity', entities.length], ['Aspect claim', facts.length], ['Sẵn sàng', facts.filter(f => ['approved', 'adjudicated', 'accepted', 'verified', 'machine_accepted'].includes(f.status)).length], ['Chưa gán danh mục', entities.filter(entity => !entity.category).length]];
   const statList = $('#kb-stat-list'); statList.replaceChildren();
   stats.forEach(([label, value]) => { const block = make('div', 'kb-stat'); block.append(make('strong', '', String(value)), make('span', '', label)); statList.append(block); });
   const search = $('#kb-search').value.trim().toLocaleLowerCase('vi');
@@ -215,17 +225,19 @@ function renderKb() {
       }); browser.append(details);
   });
   if (!browser.children.length) browser.append(make('p', 'section-help', 'Không tìm thấy dữ liệu phù hợp.'));
-  $('.sidebar-note span:last-child').firstChild.textContent = mode === 'mock' ? 'Chế độ dữ liệu mẫu' : 'KB đã nhập';
-  $('.sidebar-note small').textContent = mode === 'mock' ? 'Chưa kết nối KB trực tiếp' : `${entities.length} entity trong trình duyệt`;
+  $('.sidebar-note span:last-child').firstChild.textContent = mode === 'project' ? 'KB dự án đã tải' : mode === 'empty' ? 'Chưa có KB' : 'KB đã nhập';
+  $('.sidebar-note small').textContent = entities.length ? `${entities.length} entity sẵn sàng` : 'Nhập file hoặc thư mục knowledge_base';
 }
 
 document.querySelectorAll('.nav-item').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
 $('#entity-search').addEventListener('input', renderEntityList);
 $('#kb-search').addEventListener('input', renderKb);
 function saveKb(next) {
-  localStorage.setItem('icmr-qa-kb-v1', JSON.stringify(next));
-  entities = next; mode = 'imported';
-  generated = { mcq: [], open: [] }; skipped = { mcq: [], open: [] };
+  localStorage.setItem(KB_STORAGE_KEY, JSON.stringify(next));
+  if (mode !== 'project') localStorage.setItem(KB_SOURCE_KEY, 'imported');
+  entities = next;
+  generated = { open: [] }; skipped = { open: [] };
+  retryState = null;
   renderEntityList(); renderKb();
 }
 
@@ -272,66 +284,127 @@ async function refreshLlmStatus() {
   } catch { $('#llm-status').textContent = 'Không kiểm tra được kết nối LLM.'; }
 }
 
-$('#generate').addEventListener('click', async () => {
-  if (!selectedIds.size) return notify('Hãy chọn ít nhất một entity.', true);
-    if (view === 'mcq') {
-      const missingCategory = entities.filter(entity => selectedIds.has(entity.id) && !entity.category);
-      if (missingCategory.length) return notify(`Hãy gán danh mục cho entity trước khi tạo trắc nghiệm: ${missingCategory.map(entity => entity.name).join(', ')}.`, true);
-    }
-  const button = $('#generate'); button.disabled = true; button.textContent = 'Đang sinh QA...';
-  const settings = { entities, type: view, selectedIds, perEntity: $('#per-entity').value, perFact: $('#per-fact').value, seed: $('#seed').value, includeUnreviewed: $('#include-drafts').checked };
-  let result = generateQuestions(settings);
-  let llmError = '';
-  if (result.llmItems.length) {
-    try {
-      const qaPairs = {};
-      const failures = {};
-      const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
-      for (let offset = 0; offset < result.llmItems.length; offset++) {
-          const item = result.llmItems[offset];
-          button.textContent = `Đang phân tích fact ${offset + 1}/${result.llmItems.length}: ${item.entity_name} · ${item.aspect_label}...`;
-          let lastError = '';
-          for (let attempt = 1; attempt <= 4; attempt++) {
-            try {
-              const response = await fetch('./api/generate-qa', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: view, items: [item] }) });
-              const data = await response.json();
-              if (!response.ok) {
-                const error = new Error(data.error || `HTTP ${response.status}`);
-                error.retryAfter = response.status === 429 ? Math.max(5, Number(data.retry_after_seconds) || 10) : 0;
-                throw error;
-              }
-              const pairs = data.qa_pairs?.[item.fact_id];
-              if (!Array.isArray(pairs) || !pairs.length) {
-                const details = Array.isArray(data.warnings?.[item.fact_id]) ? data.warnings[item.fact_id].join(' ') : '';
-                throw new Error(details || 'Model không trả qa_pairs cho fact này.');
-              }
-              qaPairs[item.fact_id] = pairs;
-              lastError = '';
-              break;
-            } catch (error) {
-              lastError = error.message;
-              if (attempt < 4) {
-                const seconds = error.retryAfter || Math.min(8, 2 ** attempt);
-                button.textContent = `Vilao tạm giới hạn. Chờ ${seconds}s rồi thử lại ${item.entity_name}...`;
-                await wait(seconds * 1000);
-              }
-            }
-          }
-          if (lastError) failures[item.fact_id] = `thất bại sau 4 lần thử: ${lastError}`;
+async function requestQaTasks(tasks, button) {
+  const qaPairs = {}; const failures = {}; const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  for (let offset = 0; offset < tasks.length; offset++) {
+    const item = tasks[offset];
+    button.textContent = `Generating ${item.difficulty} ${offset + 1}/${tasks.length}: ${item.entity_name}...`;
+    let lastError = '';
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const response = await fetch('./api/generate-qa', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'open', items: [item] }) });
+        const data = await response.json();
+        if (!response.ok) { const error = new Error(data.error || `HTTP ${response.status}`); error.retryAfter = response.status === 429 ? Math.max(5, Number(data.retry_after_seconds) || 10) : 0; error.retryable = response.status === 429 || response.status >= 500; throw error; }
+        const pairs = data.qa_pairs?.[item.task_id];
+        if (!Array.isArray(pairs) || !pairs.length) { const details = Array.isArray(data.warnings?.[item.task_id]) ? data.warnings[item.task_id].join(' ') : ''; const error = new Error(`LLM could not produce valid QA after repair passes: ${details || 'no valid QA returned.'}`); error.retryable = false; throw error; }
+        qaPairs[item.task_id] = pairs; lastError = ''; break;
+      } catch (error) {
+        lastError = error.message;
+        const retryable = error.retryable || (!('retryable' in error) && !error.retryAfter);
+        if (attempt < 4 && retryable) { const seconds = error.retryAfter || Math.min(8, 2 ** attempt); button.textContent = `API temporarily unavailable. Retrying in ${seconds}s...`; await wait(seconds * 1000); }
+        else break;
       }
-      result = generateQuestions({ ...settings, llmQaPairs: qaPairs, llmErrors: failures });
-    } catch (error) { llmError = error.message; }
+    }
+    if (lastError) failures[item.task_id] = lastError;
   }
-  generated[view] = result.questions; skipped[view] = result.skipped; renderResults();
-  button.disabled = false; button.replaceChildren('Sinh cặp QA ', make('span', '', '↗'));
-  if (llmError) notify(`Không thể hoàn tất sinh QA: ${llmError}`, true);
-  else if (!result.questions.length) notify('Model chưa tạo được QA hợp lệ. Kiểm tra API key, model và nội dung fact.', true);
-  else notify(`Đã tạo ${result.questions.length} câu ${view === 'mcq' ? 'trắc nghiệm' : 'mở'}. Hãy ghép ảnh đúng entity và rà soát trước khi xuất.`);
-});
-$('#export-json').addEventListener('click', () => download(`icmr-${view}-qa.json`, JSON.stringify(generated[view], null, 2), 'application/json;charset=utf-8'));
-$('#export-csv').addEventListener('click', () => download(`icmr-${view}-qa.csv`, toCsv(generated[view]), 'text/csv;charset=utf-8'));
-$('#restore-mock').addEventListener('click', () => { entities = mock; mode = 'mock'; selectedIds = new Set(entities.map(e => e.id)); generated = { mcq: [], open: [] }; skipped = { mcq: [], open: [] }; localStorage.removeItem('icmr-qa-kb-v1'); renderEntityList(); renderKb(); notify('Đã khôi phục knowledge base mẫu.'); });
+  return { qaPairs, failures };
+}
 
+async function retryFailedQa(event) {
+  if (!retryState || retryState.running || !retryState.pending.length) return;
+  const button = event.currentTarget;
+  retryState.running = true; button.disabled = true; button.textContent = 'Đang thử lại...';
+  const retried = await requestQaTasks(retryState.pending, button);
+  Object.assign(retryState.qaPairs, retried.qaPairs);
+  retryState.failures = retried.failures;
+  retryState.pending = retryState.tasks.filter(task => retryState.failures[task.task_id]);
+  retryState.running = false;
+  const previousStatus = new Map(generated.open.map(item => [item.qa_id, item.review_status]));
+  const result = generateQuestions({ ...retryState.settings, llmQaPairs: retryState.qaPairs, llmErrors: retryState.failures });
+  generated.open = result.questions.map(item => ({ ...item, review_status: previousStatus.get(item.qa_id) || item.review_status }));
+  skipped.open = result.skipped; renderResults();
+  if (retryState.pending.length) notify(`Đã thử lại; còn ${retryState.pending.length} QA LLM chưa tạo được.`, true);
+  else notify('Đã thử lại xong các QA lỗi từ LLM.');
+}
+
+$('#generate').addEventListener('click', async () => {
+  if (!selectedIds.size) return notify('Select at least one entity.', true);
+  const button = $('#generate'); button.disabled = true; button.textContent = 'Generating QA...';
+  const settings = { entities, selectedIds: new Set(selectedIds), easyPerAspect: $('#easy-per-aspect').value, hardPerEntity: $('#hard-per-entity').value, claimsPerHard: $('#claims-per-hard').value, seed: $('#seed').value, includeUnreviewed: $('#include-drafts').checked };
+  const planned = generateQuestions(settings);
+  let qaPairs = {}; let failures = {};
+  if (planned.llmItems.length) {
+    try { ({ qaPairs, failures } = await requestQaTasks(planned.llmItems, button)); }
+    catch (error) { failures = Object.fromEntries(planned.llmItems.map(item => [item.task_id, error.message])); }
+  }
+  const result = generateQuestions({ ...settings, llmQaPairs: qaPairs, llmErrors: failures });
+  retryState = { settings, tasks: planned.llmItems, qaPairs, failures, pending: planned.llmItems.filter(item => failures[item.task_id]), running: false };
+  generated.open = result.questions; skipped.open = result.skipped; renderResults();
+  button.disabled = false; button.replaceChildren('Generate open-ended QA ', make('span', '', '->'));
+  if (!result.questions.length) notify('The model returned no valid QA. Check the API key, model, and claim content.', true);
+  else { const easy = result.questions.filter(item => item.difficulty === 'easy').length; const hard = result.questions.filter(item => item.difficulty === 'hard').length; notify(`Created ${easy} Easy and ${hard} Hard questions.`); }
+});
+$('#export-json').addEventListener('click', () => download('icmr-open-qa.json', JSON.stringify(generated.open, null, 2), 'application/json;charset=utf-8'));
+$('#export-csv').addEventListener('click', () => download('icmr-open-qa.csv', toCsv(generated.open), 'text/csv;charset=utf-8'));
+function parseCsv(text) {
+  const rows = []; let row = []; let cell = ''; let quoted = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (quoted) {
+      if (char === '"' && text[index + 1] === '"') { cell += '"'; index++; }
+      else if (char === '"') quoted = false;
+      else cell += char;
+    } else if (char === '"') quoted = true;
+    else if (char === ',') { row.push(cell); cell = ''; }
+    else if (char === '\n' || char === '\r') {
+      if (char === '\r' && text[index + 1] === '\n') index++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else cell += char;
+  }
+  if (cell.length || row.length) { row.push(cell); rows.push(row); }
+  if (!rows.length) return [];
+  const headers = rows.shift().map(header => header.trim().replace(/^\uFEFF/, ''));
+  return rows.filter(values => values.some(value => value.trim())).map(values => Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ''])));
+}
+function normalizeImportedQa(row, index) {
+  const factIds = row.fact_ids || row.source_claim_ids || row.evidence_fact_ids || (row.fact_id ? [row.fact_id] : []);
+  const ids = Array.isArray(factIds) ? factIds : String(factIds).split(/[;,]/).map(value => value.trim()).filter(Boolean);
+  const evidence = row.evidence || row.evidence_excerpt || (Array.isArray(row.evidence_excerpts) ? row.evidence_excerpts.join(' | ') : '');
+  const answer = row.answer || row.golden_answer || row.goldenAnswer || '';
+  const question = row.question || row.query || '';
+  if (!String(question).trim() || !String(answer).trim()) return null;
+  return {
+    ...row,
+    id: row.id || `imported-qa-${index + 1}`,
+    qa_id: row.qa_id || row.id || `imported-qa-${index + 1}`,
+    type: 'open', difficulty: row.difficulty === 'hard' ? 'hard' : 'easy',
+    entity_id: row.entity_id || '', entity_name: row.entity_name || '',
+    task_id: row.task_id || '', required_claim_count: Number(row.required_claim_count) || ids.length || 1,
+    fact_id: row.fact_id || ids[0] || '', fact_ids: ids, evidence_fact_ids: row.evidence_fact_ids || ids,
+    aspect: row.aspect || 'other', aspect_label: row.aspect_label || row.aspect || 'Open-ended QA',
+    question: String(question).trim(), answer: String(answer).trim(), evidence,
+    source: row.source || '', source_refs: Array.isArray(row.source_refs) ? row.source_refs : [],
+    kb_status: row.kb_status || 'unreviewed', review_status: row.review_status || 'draft',
+    answer_origin: row.answer_origin || 'imported', confidence: row.confidence || 'review_required',
+    requires_image: row.requires_image === true || row.requires_image === 'true'
+  };
+}
+$('#import-qa').addEventListener('click', () => $('#qa-import-file').click());
+$('#qa-import-file').addEventListener('change', async event => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = file.name.toLowerCase().endsWith('.csv') ? parseCsv(text) : JSON.parse(text);
+    const rows = Array.isArray(parsed) ? parsed : parsed.questions || parsed.items || [];
+    if (!Array.isArray(rows)) throw new Error('File cần chứa một mảng câu hỏi.');
+    const imported = rows.map(normalizeImportedQa).filter(Boolean);
+    if (!imported.length) throw new Error('Không tìm thấy dòng nào có đủ câu hỏi và đáp án.');
+    generated.open = imported; skipped.open = []; retryState = null; setView('open');
+    notify(`Đã mở ${imported.length} QA từ ${file.name}.`);
+  } catch (error) { notify(`Không mở được file QA: ${error.message}`, true); }
+  event.target.value = '';
+});
 async function importKbFiles(event) {
   const files = [...(event.target.files || [])].filter(file => !file.name.startsWith('_') && /\.jsonl?$/i.test(file.name));
   if (!files.length) return notify('Không tìm thấy entity JSON trong lựa chọn.', true);
@@ -344,9 +417,11 @@ async function importKbFiles(event) {
       catch (error) { throw new Error(`${file.webkitRelativePath || file.name}: ${error.message}`); }
     }
     const normalized = [...new Map(imported.map(entity => [entity.id, entity])).values()];
-    localStorage.setItem('icmr-qa-kb-v1', JSON.stringify(normalized));
+    localStorage.setItem(KB_STORAGE_KEY, JSON.stringify(normalized));
+    localStorage.setItem(KB_SOURCE_KEY, 'imported');
+    localStorage.removeItem(KB_VERSION_KEY);
     entities = normalized; mode = 'imported'; selectedIds = new Set(entities.map(e => e.id));
-    generated = { mcq: [], open: [] }; skipped = { mcq: [], open: [] };
+    generated = { open: [] }; skipped = { open: [] }; retryState = null;
     renderEntityList(); renderKb(); notify(`Đã nhập ${entities.length} entity và ${entities.flatMap(e => e.facts).length} aspect claim theo schema KB.`);
   } catch (error) { notify(`Không nhập được file: ${error.message}`, true); }
   event.target.value = '';
@@ -354,4 +429,30 @@ async function importKbFiles(event) {
 $('#kb-file').addEventListener('change', importKbFiles);
 $('#kb-folder').addEventListener('change', importKbFiles);
 
-renderEntityList(); renderKb(); setView('mcq'); refreshLlmStatus();
+async function loadProjectKnowledgeBase() {
+  if (mode === 'imported') return;
+  try {
+    const response = await fetch('./api/knowledge-base');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const version = String(payload.version || '');
+    const savedVersion = localStorage.getItem(KB_VERSION_KEY) || '';
+    if (mode === 'project' && entities.length && version && version === savedVersion) return;
+    const loaded = normalizeKnowledgeBase(payload.entities || payload);
+    entities = loaded;
+    localStorage.setItem(KB_STORAGE_KEY, JSON.stringify(entities));
+    localStorage.setItem(KB_SOURCE_KEY, 'project');
+    localStorage.setItem(KB_VERSION_KEY, version);
+    selectedIds = new Set(entities.map(entity => entity.id));
+    mode = 'project';
+    generated = { open: [] }; skipped = { open: [] };
+    renderEntityList(); renderKb();
+    notify(`Đã tải ${entities.length} entity và ${entities.reduce((sum, entity) => sum + entity.facts.length, 0)} claim từ knowledge_base.`);
+  } catch (error) {
+    mode = 'empty';
+    renderEntityList(); renderKb();
+    notify(`Chưa tải được KB của dự án (${error.message}). Hãy nhập thư mục knowledge_base ở tab Knowledge base.`, true);
+  }
+}
+
+renderEntityList(); renderKb(); setView('open'); refreshLlmStatus(); loadProjectKnowledgeBase();
